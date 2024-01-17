@@ -1,1 +1,1 @@
-# secondary_data
+# PHS 7020: Secondary Data Analysis
