@@ -1,0 +1,466 @@
+---
+title: "7020 Exercise 1"
+author: "Brenna Kelly"
+date: "2024-01-16"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+## Set-up
+
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(data.table)
+
+#setwd("/Users/brenna/Documents/School/Coursework/PHS 7020/exercise_2")
+
+```
+
+
+### Part I: Importing data
+
+#### Reading in our data
+
+We can read in all of our csvs at once by using a for-loop. We first assign a vector of file names to `files`, which we downloaded [from CMS](https://www.cms.gov/data-research/statistics-trends-and-reports/medicare-claims-synthetic-public-use-files/cms-2008-2010-data-entrepreneurs-synthetic-public-use-file-de-synpuf) to our working directory. We have 10 csv files, and we will loop through 1:10. Within the loop, we read in the file, change the names to lowercase (simply because it's my convention), and assign the dataframe a name based on: i) type of file (Summary Beneficiary, Inpatient, Outpatient), ii) file year (2008, 2009, 2010), and iii) sample number (1, 2). This is succinct but gives me enough information to distinguish between dataframes. Note that if we decided to use more CMS data, perhaps from all 20 samples, this loop would read in all 100 files with only a small modification to the code — a timesaver down the road.
+
+```{r}
+## Step 4
+
+files <- list.files("./data/DE data/", )
+
+for(i in 1:10) {
+  file <- read.csv(paste0("./data/DE data/", files[i]))
+  names(file) <- tolower(names(file))
+  nam <- paste0(case_when(grepl("Summary", files[i]) == TRUE ~ "sum", # type of file
+                          grepl("Inpatient", files[i]) == TRUE ~ "inpat",
+                          grepl("Outpatient", files[i]) == TRUE ~ "outpat"), "_",
+                case_when(grepl("2008", files[i]) == TRUE ~ "2008", # year
+                          grepl("2009", files[i]) == TRUE ~ "2009",
+                          grepl("2010", files[i]) == TRUE ~ "2010"), "_",
+                str_sub(files[i], start = (nchar(files[i]) - 4), end = (nchar(files[i]) - 4))) # sample
+  assign(nam, file)
+}
+
+```
+
+
+Next we'll get acquainted with our data by 1) check the dimensions of the data (`dim()`), with rows representing observations and columns representing variables 2) looking at a sample of the data with the `head()` function.
+
+```{r}
+## Step 5
+
+sum_2008_1$file <- "Beneficiary Sample 1, 2008"
+sum_2009_1$file <- "Beneficiary Sample 1, 2009"
+sum_2010_1$file <- "Beneficiary Sample 1, 2010"
+sum_2008_2$file <- "Beneficiary Sample 1, 2008"
+sum_2009_2$file <- "Beneficiary Sample 2, 2009"
+sum_2010_2$file <- "Beneficiary Sample 2, 2010"
+
+sum_2008_1$year <- 2008
+sum_2009_1$year <- 2009
+sum_2010_1$year <- 2010
+
+sample_1 <- rbind(sum_2008_1, sum_2009_1, sum_2010_1)
+
+sum_2008_2$year <- 2008
+sum_2009_2$year <- 2009
+sum_2010_2$year <- 2010
+
+sample_2 <- rbind(sum_2008_2, sum_2009_2, sum_2010_2)
+
+sum_all <- rbind(sample_1, sample_2)
+
+```
+
+**Question 1.** *What does each record (row) represent in each file? How many observations are variables are in each file? Does this match the data dictionary?* \n
+Each row in the **Summary Beneficiary** (`sum`) files represent a beneficiary. We can surmise this by observing that these files contain individual-level variables that would not change (e.g., beneficiary birth date, race), but we can confirm this fact by referencing the data [codebook](https://www.cms.gov/files/document/de-10-codebook.pdf-0) (page 3). The same 32 variables are present in each dataframe, which we confirm by implementing `rbind()`, which would not run unless this were true. The number of observations for each file are printed above and match what the [data dictionary](https://www.cms.gov/research-statistics-data-and-systems/downloadable-public-use-files/synpufs/downloads/synpuf_dug.pdf) tells us on pages 4-5. Although have printed the dimensions of each file here, the RStudio interface also allows us to see the number of observations and variables for each data file in our environment without executing code.
+
+```{r}
+## Step 6
+
+write.csv(sum_all, "data/clean data/combined_summary_files_clean.csv", row.names = FALSE)
+
+```
+
+
+#### Pause: consider analytic workflow
+- what did I name the files? How will I consolidate files? Would it work to combine everything into one file? Combine by file type, year? What linking variables are there?
+
+
+#### Exploring the data structure
+##### Summary file
+
+```{r}
+## Steps 7-8
+
+x <- data.frame("file_name" = c("sum_2008_1",
+                                "sum_2009_1",
+                                "sum_2010_1",
+                                "sum_2008_2",
+                                "sum_2009_2",
+                                "sum_2010_2",
+                                "TOTAL"),
+                "n_variables" = c(ncol(sum_2008_1),
+                                  ncol(sum_2009_1),
+                                  ncol(sum_2010_1),
+                                  ncol(sum_2008_2),
+                                  ncol(sum_2009_2),
+                                  ncol(sum_2010_2),
+                                  ncol(sum_all)),
+                "n_observations" = c(length(unique(sum_2008_1$desynpuf_id)),
+                                     length(unique(sum_2009_1$desynpuf_id)),
+                                     length(unique(sum_2010_1$desynpuf_id)),
+                                     length(unique(sum_2008_2$desynpuf_id)),
+                                     length(unique(sum_2009_2$desynpuf_id)),
+                                     length(unique(sum_2010_2$desynpuf_id)),
+                                     length(unique(sum_all$desynpuf_id))))
+
+print(x)
+
+```
+
+```{r}
+## Step 8
+
+# sample 1
+s1_all3 <- length(which(table(sample_1$desynpuf_id) >= 3)) # in all three years
+
+s1_0809 <- length(which(table(sample_1[which(sample_1$year %in% c(2008, 2009)), "desynpuf_id"]) >= 2)) # in 2008 and 2009
+
+# in 2008 only (two methods for determining this)
+#table(sample_1$year == 2008)
+s1_only08 <- length(unique(sample_1[which(sample_1$year == 2008), "desynpuf_id"])) # both work
+
+# sample 2
+s2_all3 <- length(which(table(sample_2$desynpuf_id) >= 3)) # in all three years
+
+s2_0809 <- length(which(table(sample_2[which(sample_2$year %in% c(2008, 2009)), "desynpuf_id"]) >= 2)) # in 2008 and 2009
+
+# in 2008 only (two methods for determining this)
+#table(sample_2$year == 2008)
+s2_only08 <- length(unique(sample_2[which(sample_2$year == 2008), "desynpuf_id"])) # both work
+
+# both samples
+sb_all3 <- length(which(table(sum_all$desynpuf_id) >= 3)) # in all three years
+
+sb_0809 <- length(which(table(sum_all[which(sum_all$year %in% c(2008, 2009)), "desynpuf_id"]) >= 2)) # in 2008 and 2009
+
+# in 2008 only (two methods for determining this)
+#table(sum_all$year == 2008)
+sb_only08 <- length(unique(sum_all[which(sum_all$year == 2008), "desynpuf_id"])) # both work
+
+dat_long <- data.frame("Sample" = c("Sample 1", "Sample 2", "Combined"),
+                       "In_2008" = c(s1_only08, s2_only08, sb_only08),
+                       "In_2008_2009" = c(s1_0809, s2_0809, sb_0809),
+                       "In_2008_2009_2010" = c(s1_all3, s2_all3, sb_all3))
+
+print(dat_long)
+
+```
+
+**Question 2.** *How many observations are seen in all three years (i.e, the same beneficiaries in all years)? This would be important if you are doing a longitudinal cohort analysis. How many observations (i.e., beneficiaries) are only in 2008? In both 2008 and 2009? Explain what this tells you about the observations.*
+The number of beneficiaries in these time periods is printed above for each sample (and combined). We observe fewer observations over longer periods, losing about 3500 observations for every year increase. However, the majority (> 95%) are present in all three years. This means that for most research questions, we could probably perform a longitudinal analysis with this data. To determine the effect of excluding these 7,148 observations, we could perform a sensitivity analysis.
+
+```{r}
+## Steps 9-10
+head(sum_all)
+
+```
+
+**Question 3.** *Looking at the data, is this what you want for your beneficiary summary file? How is each year represented? Why might this matter (or not)? Please speculate on what the utility of having year might be. Explain the two main ways that the data structure could capture year. Do you need to do this with inpatient and outpatient files as well?*
+For regression analysis, I usually prefer my data in a tidy format, with one observation per person. However, when performing a temporal or longitudinal analysis, it can make sense to have multiple observations per person — with one observation for each person-year. This is how I have formatted my summary file data. I have also stored year and sample variables, as that helps me distinguish what file the observation came from. If I used a multilevel model, I may also want to consider accounting for autocorrelation over time by including year as a random effect. Because the inpatient and outpatient files also have sample and year structure, I would want to incorporate these variables in that data format as well.
+
+##### Inpatient and outpatient data
+
+```{r}
+## Step 11 (repeat process for inpat, outpat)
+
+names(inpat_2008_1) == names(outpat_2008_1)
+
+inpat_2008_1$file <- "Inpatient 2008, Sample 1"
+inpat_2008_2$file <- "Inpatient 2008, Sample 2"
+outpat_2008_1$file <- "Outpatient 2008, Sample 1"
+outpat_2008_2$file <- "Outpatient 2008, Sample 2"
+
+inpat_all <- rbind(inpat_2008_1, inpat_2008_2)
+outpat_all <- rbind(outpat_2008_1, outpat_2008_2)
+
+table(inpat_all$file)
+table(outpat_all$file)
+
+write.csv(inpat_all, "data/clean data/combined_inpat_clean.csv", row.names = FALSE)
+write.csv(outpat_all, "data/clean data/combined_outpat_clean.csv", row.names = FALSE)
+
+```
+
+```{r}
+## Step 12
+head(outpat_all)
+
+length(unique(outpat_all$clm_id))
+nrow(outpat_all)
+
+length(unique(outpat_all$desynpuf_id))
+
+max(table(outpat_all$desynpuf_id))
+
+```
+
+**Question  4.** *Is there any variable in this file that uniquely identifies the record? Which one? Which variable might identify the unit of analysis that we'd be interested in if we linked to the beneficiary summary file? How many individuals are uniquely represented in the outpatient file? What is the maximum number of times a given individual is observed in this file?*
+Since the outpatient data is claims-based, theoretically the claim ID should uniquely identify each record. This is nearly true in our case, although 1.3% of observations do not have a unique claim ID. If we wanted to link to the beneficiary summary file, we would need to join on the beneficiary ID, which identifies a person. The outpatient file contains data for 170,567 unique beneficiaries. One beneficiary has 78 claims in this file.
+
+
+```{r}
+## Step 13
+
+outpat_all <- outpat_all |>
+  # icd 9 diagnosis
+  mutate(across(starts_with("icd9") & where(is.character), ~ na_if(.x, "")), # impute empty diag codes with NA
+         across(starts_with("icd9") & where(is.numeric), ~ na_if(.x, NA))) |> # impute empty proc codes with NA
+  unite(starts_with("icd9_dgns"), col = "all_icd9", na.rm = TRUE, remove = FALSE, sep = ", ") |> # combine diag
+  mutate(all_icd9 = ifelse(all_icd9 == "", NA, all_icd9)) # make blank NA
+
+outpat_all$icd9_count <- str_count(outpat_all$all_icd9, ',') + 1 # county
+
+table(outpat_all$icd9_count == 10) # 3034 observations with 10 ICD-9 codes
+table(is.na(outpat_all$all_icd9)) # 11201 number of observations without an ICD-9 code
+
+outpat_all <- outpat_all |>
+  # hcpcs
+  mutate(across(starts_with("hcpcs") & where(is.character), ~ na_if(.x, "")),
+         across(starts_with("hcpcs") & where(is.numeric), ~ na_if(.x, NA))) |>
+  unite(starts_with("hcpcs"), col = "all_hcpcs", na.rm = TRUE, remove = FALSE, sep = ", ") |>
+  mutate(all_hcpcs = ifelse(all_hcpcs == "", NA, all_hcpcs))
+
+outpat_all$hcpcs_count <- str_count(outpat_all$all_hcpcs, ',') + 1
+
+table(outpat_all$hcpcs_count == 45)
+table(is.na(outpat_all$all_hcpcs))
+
+str(outpat_2008_1)
+
+```
+
+```{r}
+str(outpat_all)
+```
+
+**Question 5.** *What are icd9_dgns_cd1 – icd9_dgns_cd10? – explain what these variables are in your own words.  What is the format of these variables?  Inspect the variables and discuss why R “chose” the format it did and what limitations might be caused by the format.  How many records do not have an ICD-9 diagnosis code? How many records have 10 ICD-9 diagnosis codes?  How many records have 45 HCPCS codes? * A claim can be associated with more than one ICD-9 diagnosis code. In the case of this dataset, there can be up to 10 diagnosis codes associated with one claim. R used the character format for ICD-9 diagnosis codes, because although some ICD-9 codes only contain integers, many include a mixture of integers and letters. This is the appropriate format for the data, although it makes it more difficult to summarize the variable, as algebraic operations can't be performed. After ensuring missing values were designated as "NA", we learn that 11,201 observations do not have an ICD-9 diagnosis code, and 3,034 observations have 10 diagnosis codes. Up to 45 HCPCS codes can be associated with a claim, but in this dataset, no observations have that many (and 74,914 have no HCPCS codes).
+
+```{r}
+## Step 14
+
+tail(sort(table(outpat_all$icd9_dgns_cd_1)))
+# most frequent: 4019; unspecified special hypertension
+# next: 4011; Benign essential hypertension
+# next: OTHER
+
+```
+**Question 6.** *What is the most frequent diagnosis for icd9_dgns_cd_1?  Note: give the actual clinical diagnosis.* The most frequent ICD-9 diagnosis code is 4019 (unspecified special hypertension), with 38,062 counts. The next-most frequent is 4011 (benign essential hypertension) with 37,533 counts, followed by observations labeled "OTHER," with no diagnosis code or clinical definition of the diagnosis given (11,315 counts).
+
+```{r}
+## Step 16
+
+dd <- data.frame("File_names" = c("gi_medpar_yr1.txt",
+                                  "gi_medpar_yr1.txt",
+                                  "gi_medpar_yr3.txt",
+                                  "gi_den_yr1.txt",
+                                  "gi_den_yr2.txt",
+                                  "gi_den_yr3.txt",
+                                  "gi_pop_zcta.txt",
+                                  "gi_pop_pcsa.txt"),
+                 "File_type" = c("Utilization, Year 3156",
+                                 "Utilization, Year 3157",
+                                 "Utilization, Year 3158",
+                                 "Enrollment, Year 3156",
+                                 "Enrollment, Year 3157",
+                                 "Enrollment, Year 3158",
+                                 "Contextual",
+                                 "Contextual"),
+                 "File_description" = c("Beneficiary stay in inpatient hospital or SNF",
+                                        "Beneficiary stay in inpatient hospital or SNF",
+                                        "Beneficiary stay in inpatient hospital or SNF",
+                                        "Denominator data for enrolled/entitled Medicare Beneficiaries",
+                                        "Denominator data for enrolled/entitled Medicare Beneficiaries",
+                                        "Denominator data for enrolled/entitled Medicare Beneficiaries",
+                                        "Population, physician census",
+                                        "Population, physician census"),
+                 "Unit_of_observation" = c("Hospital Claims",
+                                           "Hospital Claims",
+                                           "Hospital Claims",
+                                           "Medicare Beneficiary", 
+                                           "Medicare Beneficiary",
+                                           "Medicare Beneficiary",
+                                           "Zip Code Area",
+                                           "Primary Service Area"))
+
+print(dd)
+
+```
+**Question 7.** *Please write the name of each file for the DartmouthDerived Medicare files (DDMedicare) and a sentence or phrase what the data are and the unit of observation for each of them.*
+
+
+```{r}
+## Steps 17-18
+
+codebook <- read.csv("data/denominator file codebook.csv") # data dictionary (contextual dd below)
+
+# getting start position, end position, and width
+codebook$position_1 <- as.numeric(
+  str_split_fixed(codebook$Position, "-", 2)[, 1])
+codebook$position_2 <- as.numeric(
+  str_split_fixed(codebook$Position, "-", 2)[, 2])
+codebook$width <- ifelse(is.na(codebook$position_2), 1,
+                         codebook$position_2 - codebook$position_1 + 1)
+# getting column names
+codebook$names <- tolower(gsub(" ", "_", codebook$Variable.Name))
+
+denom <- read_fwf(file = "data/gi_den_yr1.txt",
+                  fwf_widths(codebook$width, col_names = codebook$names),
+                  col_select = c("darthic", "sex", "race", "state", "county", 
+                                 "zcta", "pcsa", "phsa", "phrr"))
+
+# to get unique counties, we need to combine county FIPS with state FIPS
+denom$county_fips <- paste0(denom$state, denom$county)
+length(unique(denom$county_fips)) / 3143 # 943 of the 3,143 counties in the US are represented (about 30%)
+
+# let's look at the 3-digit county fips alone
+head(denom$county)
+as.numeric(head(denom$county))
+
+summary(denom$county)
+table(denom$county)
+as.numeric(tail(denom$county))
+
+```
+
+**Question 8.** *Explain how county is different if entered as a string v. numeric variable.  Why might this be?  What implications might the differences have?  Note:  this is not intuitive so you might want to talk with Tracy or one of the TAsv if you feel stuck in answering this question.* County FIPS codes are not numeric. Each county is assigned a three-digit code alphabetically based on county name, beginning with 001, then 002, and so on. The same procedure is done for states with a two-digit code, beginning at 01. If our analysis encompasses more than one state, then county FIPS codes will only be meaningful if combined with state FIPS. Generally, county FIPS refers to the five-digit code, combining the two state digits, followed by the three county digits. If we ignored the state portion, our county codes would not be unique — Autauga County, Alabama (full fips: 01001, county fips: 001) would be conflated with Albany County, Wyoming (full fips: 56001, county fips: 001). FIPS codes are assigned to help us uniquely identify each geographical unit. This knowledge helps us understand why it would not be appropriate to store FIPS codes as numeric values. Autauga County would becoming 11, rather than 01001, which means this county FIPS would be equivalent to the state FIPS for the District of Columbia (11). We could no longer uniquely identify these units or make clear what unit of analysis we are working with. If a numeric FIPS code were included in a regression model, it would try to understand the average effect of a one-unit increase in FIPS code (i.e., the difference between 01001 and 01002), which would not be sensible. But storing it appropriately, however, we could use these unique identifies to construct a spatial weight matrix to remove the effect of spatial autocorrelation, which creates structure in the residual error (geographic clustering).
+
+```{r}
+## Steps 19-21
+
+dim(denom) # 1,458,621 observations with 8 variables
+
+write.csv(denom, "data/clean data/gi_den_yr1_clean.csv", row.names = FALSE) # saving the file
+
+denom <- fread("data/clean data/gi_den_yr1_clean.csv")
+
+summary(denom) # brief look at all variables
+head(denom) # preview of all variables
+
+table(is.na(denom$darthic)) # any missing a medicare beneficiary id? (this would be concerning)
+
+table(denom$county == "999") # county is missing for 80 observations; only 0.005 % of the data
+
+# for fun, let's learn more observations missing county
+missing_county <- read_fwf(file = "data/gi_den_yr1.txt",
+                           fwf_widths(codebook$width, col_names = codebook$names),
+                           col_select = c("darthic", "sex", "race", 
+                                          "state", "dob", "county",
+                                          "zcta", "pcsa", "phsa", "phrr")) |>
+  filter(county == "999")
+
+summary(missing_county)
+# they are also missing state:
+table(missing_county$state)
+# but oddly, they aren't missing zip code area or services areas; we could decide to approximate county based on location of zip (although they don't nest perfectly) later on
+
+table(denom$zcta == "99999")
+table(denom$pcsa == "99999")
+table(denom$phsa == "99999")
+
+# more exploration
+table(denom$sex)
+prop.table(table(denom$sex))
+# women make up the majority of the data (n = 860,543, 59.0%)
+
+table(denom$race)
+prop.table(table(denom$race))
+# the most common race is White (n = 1,255,770, 86.1%), followed by Black (n = 171,295, 11.7%)
+
+# there
+table(denom$sex, denom$race)
+round(prop.table(table(denom$sex, denom$race)), 3)
+# the most common demographic is White women (n = 735,308, 50.4%), followed by White men (n = 520,462, 35.7%)
+
+```
+
+```{r}
+## Step 22
+
+# MEDPAR
+mp_codebook <- read.csv("data/medpar codebook.csv")[-1, ] # data dictionary
+
+# getting start position, end position, and width
+mp_codebook$Position <- gsub(" ", "", mp_codebook$Position)
+mp_codebook$position_1 <- as.numeric(
+  str_split_fixed(mp_codebook$Position, "-", 2)[, 1])
+mp_codebook$position_2 <- as.numeric(
+  str_split_fixed(mp_codebook$Position, "-", 2)[, 2])
+mp_codebook$width <- ifelse(is.na(mp_codebook$position_2), 1,
+                         mp_codebook$position_2 - mp_codebook$position_1 + 1)
+# getting column names
+mp_codebook$names <- tolower(gsub(" ", "_", mp_codebook$Variable))
+
+# read it in
+medpar <- read_fwf(file = "data/gi_medpar_yr1.txt",
+                  fwf_widths(mp_codebook$width, col_names = mp_codebook$names),
+                  col_select = c("darthic", "age", "sex", "race", 
+                                 "county", "drg", "phsa", "phrr"))
+
+# POP_PCSA
+pcsa_codebook <- read.csv("data/pcsa codebook.csv") # data dictionary
+
+# getting start position, end position, and width
+pcsa_codebook$Position <- gsub(" ", "", pcsa_codebook$Position)
+pcsa_codebook$position_1 <- as.numeric(
+  str_split_fixed(pcsa_codebook$Position, "-", 2)[, 1])
+pcsa_codebook$position_2 <- as.numeric(
+  str_split_fixed(pcsa_codebook$Position, "-", 2)[, 2])
+pcsa_codebook$width <- ifelse(is.na(pcsa_codebook$position_2), 1,
+                         pcsa_codebook$position_2 - pcsa_codebook$position_1 + 1)
+# getting column names
+pcsa_codebook$names <- tolower(gsub(" ", "_", pcsa_codebook$Variable.Name))
+
+# read it in
+pcsa <- read_fwf(file = "data/gi_pop_pcsa.txt",
+                 fwf_widths(pcsa_codebook$width, col_names = pcsa_codebook$names),
+                 col_select = c("pg_doc", "phsa"))
+
+```
+
+#### Data management
+
+```{r}
+
+## Step 23
+head(medpar[sort(medpar$phsa), ]) # preview of medpar, sorted by phsa
+
+med_age_phsa <- aggregate(medpar$age, by = list(medpar$phsa), FUN = median)
+names(med_age_phsa) <- c("phsa", "med_age_phsa")
+
+## Step 24
+head(denom[sort(denom$phsa), ]) # preview of denom, sorted by phsa
+
+denom$phsa <- as.character(denom$phsa)
+med_age_phsa$phsa <- as.character(med_age_phsa$phsa)
+
+# create a new variable for median age by phsa in denom by merging the two together
+denom_v2 <- merge(denom, med_age_phsa, by = "phsa", all.x = TRUE) # all.x = TRUE to allow many:one
+
+table(is.na(denom_v2$phsa)) # there are no unmatched observations; every observation has a med_age_phsa
+
+```
+
+
+
+
