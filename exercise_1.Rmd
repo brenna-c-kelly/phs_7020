@@ -35,10 +35,10 @@ We can read in all of our csvs at once by using a for-loop. We first assign a ve
 ```{r}
 ## Step 4
 
-files <- list.files("./data/ex 1/DE data/", )
+files <- list.files("./data/DE data/", )
 
 for(i in 1:10) {
-  file <- read.csv(paste0("./data/ex 1/DE data/", files[i]))
+  file <- read.csv(paste0("./data/DE data/", files[i]))
   names(file) <- tolower(names(file))
   nam <- paste0(case_when(grepl("Summary", files[i]) == TRUE ~ "sum", # type of file
                           grepl("Inpatient", files[i]) == TRUE ~ "inpat",
@@ -87,7 +87,7 @@ Each row in the **Summary Beneficiary** (`sum`) files represent a beneficiary. W
 ```{r}
 ## Step 6
 
-write.csv(sum_all, "data/ex 1/clean data/combined_summary_files_clean.csv", row.names = FALSE)
+write.csv(sum_all, "data/clean data/combined_summary_files_clean.csv", row.names = FALSE)
 
 ```
 
@@ -197,8 +197,8 @@ outpat_all <- rbind(outpat_2008_1, outpat_2008_2)
 table(inpat_all$file)
 table(outpat_all$file)
 
-write.csv(inpat_all, "data/ex 1/clean data/combined_inpat_clean.csv", row.names = FALSE)
-write.csv(outpat_all, "data/ex 1/clean data/combined_outpat_clean.csv", row.names = FALSE)
+write.csv(inpat_all, "data/clean data/combined_inpat_clean.csv", row.names = FALSE)
+write.csv(outpat_all, "data/clean data/combined_outpat_clean.csv", row.names = FALSE)
 
 ```
 
@@ -312,7 +312,7 @@ print(dd)
 ```{r}
 ## Steps 17-18
 
-codebook <- read.csv("data/ex 1/denominator file codebook.csv") # data dictionary (contextual dd below)
+codebook <- read.csv("data/denominator file codebook.csv") # data dictionary (contextual dd below)
 
 # getting start position, end position, and width
 codebook$position_1 <- as.numeric(
@@ -324,7 +324,7 @@ codebook$width <- ifelse(is.na(codebook$position_2), 1,
 # getting column names
 codebook$names <- tolower(gsub(" ", "_", codebook$Variable.Name))
 
-denom <- read_fwf(file = "data/ex 1/gi_den_yr1.txt",
+denom <- read_fwf(file = "data/gi_den_yr1.txt",
                   fwf_widths(codebook$width, col_names = codebook$names),
                   col_select = c("darthic", "sex", "race", "state", "county", 
                                  "zcta", "pcsa", "phsa", "phrr"))
@@ -350,9 +350,9 @@ as.numeric(tail(denom$county))
 
 dim(denom) # 1,458,621 observations with 8 variables
 
-write.csv(denom, "data/ex 1/clean data/gi_den_yr1_clean.csv", row.names = FALSE) # saving the file
+write.csv(denom, "data/clean data/gi_den_yr1_clean.csv", row.names = FALSE) # saving the file
 
-denom <- fread("data/ex 1/clean data/gi_den_yr1_clean.csv")
+denom <- fread("data/clean data/gi_den_yr1_clean.csv")
 
 summary(denom) # brief look at all variables
 head(denom) # preview of all variables
@@ -362,7 +362,7 @@ table(is.na(denom$darthic)) # any missing a medicare beneficiary id? (this would
 table(denom$county == "999") # county is missing for 80 observations; only 0.005 % of the data
 
 # for fun, let's learn more observations missing county
-missing_county <- read_fwf(file = "data/ex 1/gi_den_yr1.txt",
+missing_county <- read_fwf(file = "data/gi_den_yr1.txt",
                            fwf_widths(codebook$width, col_names = codebook$names),
                            col_select = c("darthic", "sex", "race", 
                                           "state", "dob", "county",
@@ -398,7 +398,7 @@ round(prop.table(table(denom$sex, denom$race)), 3)
 ## Step 22
 
 # MEDPAR
-mp_codebook <- read.csv("data/ex 1/medpar codebook.csv")[-1, ] # data dictionary
+mp_codebook <- read.csv("data/medpar codebook.csv")[-1, ] # data dictionary
 
 # getting start position, end position, and width
 mp_codebook$Position <- gsub(" ", "", mp_codebook$Position)
@@ -412,13 +412,13 @@ mp_codebook$width <- ifelse(is.na(mp_codebook$position_2), 1,
 mp_codebook$names <- tolower(gsub(" ", "_", mp_codebook$Variable))
 
 # read it in
-medpar <- read_fwf(file = "data/ex 1/gi_medpar_yr1.txt",
+medpar <- read_fwf(file = "data/gi_medpar_yr1.txt",
                   fwf_widths(mp_codebook$width, col_names = mp_codebook$names),
                   col_select = c("darthic", "age", "sex", "race", 
                                  "county", "drg", "phsa", "phrr"))
 
 # POP_PCSA
-pcsa_codebook <- read.csv("data/ex 1/pcsa codebook.csv") # data dictionary
+pcsa_codebook <- read.csv("data/pcsa codebook.csv") # data dictionary
 
 # getting start position, end position, and width
 pcsa_codebook$Position <- gsub(" ", "", pcsa_codebook$Position)
@@ -432,7 +432,7 @@ pcsa_codebook$width <- ifelse(is.na(pcsa_codebook$position_2), 1,
 pcsa_codebook$names <- tolower(gsub(" ", "_", pcsa_codebook$Variable.Name))
 
 # read it in
-pcsa <- read_fwf(file = "data/ex 1/gi_pop_pcsa.txt",
+pcsa <- read_fwf(file = "data/gi_pop_pcsa.txt",
                  fwf_widths(pcsa_codebook$width, col_names = pcsa_codebook$names),
                  col_select = c("pg_doc", "phsa"))
 
