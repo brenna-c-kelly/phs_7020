@@ -1,0 +1,179 @@
+---
+title: "exercise_2"
+author: "Brenna Kelly"
+date: "2024-02-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+
+## Set-up
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggpubr)
+library(stringr)
+library(ggplot2)
+library(data.table)
+
+```
+
+### Objectives:
+1. Using the DDMedicare data found in Box, read in Medicare Part A (MEDPAR) claims, Denominator and Glover Isle contextual files (or use your files from last week if you have the variables you want) and make sure that you’re familiar with these files through your lab last week and supplemental readings.  
+
+2. Calculate Hospital Referral Region (pHRR) and Hospital Service Area (pHSA) discharge rates for several Diagnostic Related Groups (DRGs).
+
+3. Calculate the ratio of area (pHRR and pHSA) to overall Glover Isle discharge rates for each DRG and graph the variation with box plots.
+
+4. Calculate the extremal quotient (ratio of high to low rate), and interquartile ratio for the DRGs by pHSAs and pHRRs.
+
+5. Link data about primary care physician supply to the pHSAs and measure the association of area primary care physician supply with the DRG specific rates.
+
+6. Summarize and interpret the above results.
+
+
+### Part I: Set-up
+
+#### Reading in our data
+We've obtained the denominator, Medicare Part A, and contextual data for Glover Isle from the Dartmouth Derived folder in our course Box. We've referred to the data dictionaries as well.
+
+```{r}
+
+# Denominator
+denom <- fread("data/clean data/gi_den_yr1_clean.csv")
+
+# MEDPAR
+mp_codebook <- read.csv("data/medpar codebook.csv")[-1, ] # data dictionary
+
+# getting start position, end position, and width
+mp_codebook$Position <- gsub(" ", "", mp_codebook$Position)
+mp_codebook$position_1 <- as.numeric(
+  str_split_fixed(mp_codebook$Position, "-", 2)[, 1])
+mp_codebook$position_2 <- as.numeric(
+  str_split_fixed(mp_codebook$Position, "-", 2)[, 2])
+mp_codebook$width <- ifelse(is.na(mp_codebook$position_2), 1,
+                         mp_codebook$position_2 - mp_codebook$position_1 + 1)
+# getting column names
+mp_codebook$names <- tolower(gsub(" ", "_", mp_codebook$Variable))
+
+# read it in
+medpar <- read_fwf(file = "data/gi_medpar_yr1.txt",
+                  fwf_widths(mp_codebook$width, col_names = mp_codebook$names),
+                  col_select = c("darthic", "age", "sex", "race", 
+                                 "county", "drg", "phsa", "phrr"))
+
+# POP_PCSA
+pcsa_codebook <- read.csv("data/pcsa codebook.csv") # data dictionary
+
+# getting start position, end position, and width
+pcsa_codebook$Position <- gsub(" ", "", pcsa_codebook$Position)
+pcsa_codebook$position_1 <- as.numeric(
+  str_split_fixed(pcsa_codebook$Position, "-", 2)[, 1])
+pcsa_codebook$position_2 <- as.numeric(
+  str_split_fixed(pcsa_codebook$Position, "-", 2)[, 2])
+pcsa_codebook$width <- ifelse(is.na(pcsa_codebook$position_2), 1,
+                         pcsa_codebook$position_2 - pcsa_codebook$position_1 + 1)
+# getting column names
+pcsa_codebook$names <- tolower(gsub(" ", "_", pcsa_codebook$Variable.Name))
+
+# read it in
+pcsa <- read_fwf(file = "data/gi_pop_pcsa.txt",
+                 fwf_widths(pcsa_codebook$width, col_names = pcsa_codebook$names),
+                 col_select = c("pg_doc", "phsa"))
+
+```
+
+#### Analytic workflow
+
+```{r}
+
+```
+
+
+### Tasks
+
+#### **1. Calculate pHRR discharge rates.**
+
+Calculate discharge rates by pHRRs for the following five DRG groups: 89; 127; 209; 210&211 combined; and DRG 121&122&123 combined.  (“Combined” means create a variable that adds together the DRG events).  For example DRG 121, 122, and 123 are all patients with acute myocardial infarction (AMI). By combining them, you will generate an overall variable for AMI discharges.  What types of hospitalizations do these other DRGs represent?  Look them up in the data dictionary and label appropriately the variables that you create. All variables should be labeled in your analytic files.
+
+```{r}
+
+medpar$drg_group <- case_when(medpar$drg == 89 ~ "SIMPLE PNEUMONIA & PLEURISY AGE >17 W CC",
+                              medpar$drg == 127 ~ "HEART FAILURE & SHOCK",
+                              medpar$drg == 209 ~ "MAJOR JOINT & LIMB REATTACHMENT PROCEDURES OF LOWER EXTREMITY",
+                              medpar$drg %in% c(210, 211) ~ "HIP & FEMUR PROCEDURES EXCEPT MAJOR JOINT AGE >17",
+                              medpar$drg %in% c(121, 122, 123) ~ "CIRCULATORY DISORDERS W AMI")
+```
+
+How to calculate these pHRR rates?  What are the component parts of a rate?  You will need to summarize the numerator by pHRR using the MEDPAR file, and the denominator using the denominator file.  So, there should be two files as a result of this summarization – one with DRG specific counts of discharges by HRR (the units of analysis) and the other a count of beneficiaries by HRR.  Then, you can link these files together and calculate the rates.  By convention, the rates should be scaled to discharges per 1,000 beneficiaries.   
+
+```{r}
+hrr_by_drg <- medpar |>
+  count(phrr, drg_group) |>
+  rename(count_hrr_drg = n)
+
+dx_by_hrr <- denom |>
+  count(phrr)  |>
+  rename(county_hrr = n)
+
+dx_by_phh <- merge(hrr_by_drg, dx_by_hrr, by = "phrr")
+
+dx_by_phh$discharge_rate <- 1000 * dx_by_phh$count_hrr_drg / dx_by_phh$county_hrr
+
+dx_by_phh_noNA <- dx_by_phh |>
+  filter(!is.na(drg_group))
+
+ggscatter(dx_by_phh_noNA, x = "count_hrr_drg", y = "discharge_rate", 
+          color = "drg_group", size = 2, alpha = 0.75, 
+          palette = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"))
+
+ggscatter(dx_by_phh_noNA, x = "count_hrr_drg", y = "discharge_rate", 
+          color = "drg_group", size = 2, alpha = 0.75, 
+          palette = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"))
+
+```
+
+
+Now you should present these rates – Use the graph box (Stata) or an R command to visualize the variation. Also, calculate the extremal quotient and interquartile ratio for each condition.  One of the problems with a comparison of rates is that the DRGs have different overall rates.  Low rates appear to have less variation with these plots. To correct for this, determine an overall Glover Isle rate (collapsing the MEDPAR and the denominator files into a single record), and then link it back to your rates by HRR file.  Then calculate the HRR to Glover Isle ratio for each DRG for HRRs.  Now repeat the box graphing.  Which condition has the highest variation?  
+
+```{r}
+
+iqr_fx <- function(x) {
+  quantile(x, c(0.1, 0.25, 0.75, 0.9))
+}
+
+dx_by_phh_noNA$drg_group <- as.character(dx_by_phh_noNA$drg_group)
+
+res <- list()
+
+for(i in unique(dx_by_phh_noNA$drg_group)) {
+  dat <- dx_by_phh_noNA[which(dx_by_phh_noNA$drg_group == i), ]
+  res[[i]] <- iqr_fx(dat$discharge_rate)
+}
+
+iqrs <- do.call(rbind, res) |>
+  as_tibble(rownames = "drg_group")
+
+iqrs$drg_group_label = str_wrap(iqrs$drg_group, width = 20)
+
+
+iqrs |>
+  ggplot(aes(y = drg_group_label, x = `25%`)) +
+  theme_classic() +
+  geom_linerange(aes(xmin = `25%`, xmax = `75%`)) +
+  geom_linerange(aes(xmin = `10%`, xmax = `90%`), linetype = "dotted") +
+  labs(title = "IQR of discharge rates by DRG", x = "Discharge rate, per 1,000", y = "Diagnosis Related Groups")
+
+
+```
+
+
+
+
+
