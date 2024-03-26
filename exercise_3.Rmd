@@ -1,0 +1,259 @@
+---
+title: "exercise_3"
+author: "Brenna Kelly"
+date: "2024-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(lubridate)
+library(data.table)
+
+```
+
+**Instructions:** *The goal of this lab is for you to measure Glover Isle readmission rates across hospital referral regions.  In order to do this, you will need to determine the index discharge for a specific cause and then determine, if it occurs, the first subsequent discharge for any cause.*
+
+*This will require using two years of MEDPAR data.  Index hospitalizations will occur anytime during the two years.  This may lead to some bias in the rates (why??), but controlling for this is beyond the scope of the lab.*
+
+*For DRG 127 (congestive heart failure) calculate readmission rates across the Glover Isle HRRs.*
+
+*Examine the effect of age, sex, and race on the likelihood of readmission for CHF using a multilevel modeling approach to account for potential non-independence of observations within HRRs.  Explain the model Stata output as a short paragraph below your Stata results.*
+
+*Write an abstract with the title: “Regional variation in readmission rates.” In the conclusion section, provide your speculation for why these rates differ. The deliverables for this exercise will be: Workflow diagram (1 point), Rcode/Rmd (2 points),  Abstract (approach, analysis, and content/written form)	(4 points).*
+
+### Set-up
+
+### Workflow
+
+![Workflow diagram.](/Users/brenna/Documents/School/Coursework/PHS 7020/exercise_3 workflow.png)
+
+#### Reading in our data
+
+```{r}
+
+mp_codebook <- read.csv("data/medpar codebook.csv")[-1, ] # data dictionary
+
+# getting start position, end position, and width
+mp_codebook$Position <- gsub(" ", "", mp_codebook$Position)
+mp_codebook$position_1 <- as.numeric(
+  str_split_fixed(mp_codebook$Position, "-", 2)[, 1])
+mp_codebook$position_2 <- as.numeric(
+  str_split_fixed(mp_codebook$Position, "-", 2)[, 2])
+mp_codebook$width <- ifelse(is.na(mp_codebook$position_2), 1,
+                         mp_codebook$position_2 - mp_codebook$position_1 + 1)
+# getting column names
+mp_codebook$names <- tolower(gsub(" ", "_", mp_codebook$Variable))
+
+# read it in
+medpar_y1 <- read_fwf(file = "data/gi_medpar_yr1.txt",
+                      fwf_widths(mp_codebook$width, col_names = mp_codebook$names),
+                      col_select = c("darthic", "age", "sex", "race", "admdate",
+                                     "county", "drg", "phsa", "phrr", "state",
+                                     "dschdate", "dod")) |>
+  mutate(year = 1)
+medpar_y2 <- read_fwf(file = "data/gi_medpar_yr2.txt",
+                      fwf_widths(mp_codebook$width, col_names = mp_codebook$names),
+                      col_select = c("darthic", "age", "sex", "race", "admdate",
+                                     "county", "drg", "phsa", "phrr", "state",
+                                     "dschdate", "dod")) |>
+  mutate(year = 2)
+medpar_y3 <- read_fwf(file = "data/gi_medpar_yr3.txt",
+                      fwf_widths(mp_codebook$width, col_names = mp_codebook$names),
+                      col_select = c("darthic", "age", "sex", "race", "admdate",
+                                     "county", "drg", "phsa", "phrr", "state",
+                                     "dschdate", "dod")) |>
+  mutate(year = 3)
+
+# combining years; we'll do all three (just because we can)
+medpar <- rbind(medpar_y1,
+                medpar_y2,
+                medpar_y3)
+
+```
+
+By including all three years of data, we minimize the amount of non-index cases which might be misclassified as index cases. However, non-index cases in year one, in particular, could still be misclassified because we may not have observed their previous interactions with the healthcare system.
+
+### Data cleaning
+
+```{r}
+
+# fixing NA value for date of death
+medpar$dod <- ifelse(medpar$dod == ".", NA, medpar$dod)
+
+# discharge date
+medpar$discharge_date <- str_sub(medpar$dschdate, 
+                                 start = (nchar(medpar$dschdate) - 3), 
+                                 end = nchar(medpar$dschdate))
+medpar$discharge_date <- case_when(str_sub(medpar$dschdate, start = 4, end = 4) == 6 ~ paste0("2006", medpar$discharge_date),
+                                   str_sub(medpar$dschdate, start = 4, end = 4) == 7 ~ paste0("2007", medpar$discharge_date),
+                                   str_sub(medpar$dschdate, start = 4, end = 4) == 8 ~ paste0("2008", medpar$discharge_date))
+medpar$discharge_date <- ymd(medpar$discharge_date)
+
+# death date
+medpar$death_date <- str_sub(medpar$dod,
+                             start = (nchar(medpar$dod) - 3),
+                             end = nchar(medpar$dod))
+medpar$death_date <- case_when(str_sub(medpar$dod, start = 4, end = 4) == 6 ~ paste0("2006", medpar$death_date),
+                               str_sub(medpar$dod, start = 4, end = 4) == 7 ~ paste0("2007", medpar$death_date),
+                               str_sub(medpar$dod, start = 4, end = 4) == 8 ~ paste0("2008", medpar$death_date),
+                               str_sub(medpar$dod, start = 4, end = 4) == 9 ~ paste0("2009", medpar$death_date))
+medpar$death_date <- ymd(medpar$death_date)
+
+# admit date
+medpar$admit_date <- str_sub(medpar$admdate,
+                             start = (nchar(medpar$admdate) - 3),
+                             end = nchar(medpar$admdate))
+medpar$admit_date <- case_when(str_sub(medpar$admdate, start = 4, end = 4) == 6 ~ paste0("2006", medpar$admit_date),
+                               str_sub(medpar$admdate, start = 4, end = 4) == 7 ~ paste0("2007", medpar$admit_date),
+                               str_sub(medpar$admdate, start = 4, end = 4) == 8 ~ paste0("2008", medpar$admit_date),
+                               str_sub(medpar$admdate, start = 4, end = 4) == 9 ~ paste0("2009", medpar$admit_date))
+medpar$admit_date <- ymd(medpar$admit_date)
+
+
+# now we need to ensure that we capture all observations for people who had CHF *after* the initial discharge for CHF
+date_of_chf_dx <- medpar[which(medpar$drg == 127), c("darthic", "discharge_date")]
+
+date_of_chf_dx <- date_of_chf_dx |>
+  arrange(darthic, discharge_date) |> # sorting by date
+  group_by(darthic) |> # for each ID
+  filter(row_number() == 1) # the first discharge with CHF is the initial discharge
+
+names(date_of_chf_dx) <- c("darthic", "CHF_dx_date") # this is the date that each patient first had a CHF encounter
+
+# combine CHF and non-CHF
+medpar <- merge(medpar, date_of_chf_dx, by = "darthic", all.x = TRUE)
+
+medpar <- medpar |>
+  filter(!discharge_date < CHF_dx_date) |> # only keep observations which occurred after the CHF dx
+  filter(!discharge_date > death_date | # only allow discharges prior to a patient dying
+           is.na(death_date)) # the comparitor won't work where there is no death date
+
+```
+
+### An aside, for fun
+
+```{r}
+# just curious
+## survival plot
+
+medpar$time_to_death_after_dx <- medpar$death_date - medpar$CHF_dx_date
+
+survival <- medpar |>
+  distinct(darthic, .keep_all = TRUE) |>
+  mutate(time_to_death_after_dx = as.numeric(time_to_death_after_dx))
+survival$died <- ifelse(is.na(survival$death_date), FALSE, TRUE)
+
+library(condsurv)
+library(ggsurvfit)
+library(gtsummary)
+library(tidycmprsk)
+
+Surv(survival$time_to_death_after_dx, survival$died)[1:10]
+
+survfit2(Surv(time_to_death_after_dx, died) ~ 1, data = survival) %>% 
+  ggsurvfit() +
+  labs(
+    x = "Days",
+    y = "Overall survival probability"
+  ) +
+  add_confidence_interval()
+
+```
+
+### Calculation of outcome
+
+```{r}
+# count of observations (admissions) per person
+admits <- medpar |>
+  count(darthic) |>
+  rename(admissions = n)
+summary(admits$admissions)
+
+hist(admits$admissions)
+
+# count of observations (admissions for CHF) per person; not for model
+admits_for_CHF <- medpar |>
+  filter(drg == 127) |>
+  count(darthic) |>
+  rename(admissions = n)
+summary(admits_for_CHF$admissions)
+
+hist(admits_for_CHF$admissions)
+
+# we want to maintain the static demographics from the medpar file, but we don't want duplicates or patients who died
+medpar_distinct <- medpar |>
+  distinct(darthic, .keep_all = TRUE)
+
+# put it all together
+dat <- merge(admits, medpar_distinct, by = "darthic", all.x = TRUE, all.y = TRUE) |>
+  mutate(admissions_bin = ifelse(admissions == 1, 0, admissions)) |>
+  mutate(readmissions = admissions - 1) |>
+  mutate(readmitted_bin = ifelse(admissions_bin == 0, 0, 1))
+
+```
+
+
+```{r}
+
+library(lme4)
+
+# final exclusions
+dat <- dat |>
+  filter(phrr != 99999)
+
+# centering age on the mean (the distribution is not skewed) and scaling by 10 years
+dat$age_cs <- (dat$age / 10) - mean(dat$age / 10)
+
+dat$sex_label <- case_when(dat$sex == 1 ~ "male",
+                           dat$sex == 2 ~ "female")
+prop.table(table(dat$sex_label)) * 100
+# female is the larger group, but it's more standard to set the referent as male
+dat$sex_label <- relevel(as.factor(dat$sex_label), ref = "male")
+
+# labeling race, with White as the referent
+dat$race_label <- case_when(dat$race == 0 ~ "unknown",
+                      dat$race == 1 ~ "white",
+                      dat$race == 2 ~ "black",
+                      dat$race == 3 ~ "other",
+                      dat$race == 4 ~ "asian",
+                      dat$race == 5 ~ "hispanic",
+                      dat$race == 6 ~ "native american")
+dat$race_label <- relevel(as.factor(dat$race_label), ref = "white")
+
+#since the data has some structure (pHRR), we'll remove this with a random effect
+dat$phrr <- as.factor(dat$phrr)
+
+summary(
+  glmer_res_pois <- glmer(readmissions ~ sex_label + age_cs + race_label + (1 | phrr), data = dat, family = "poisson")
+)
+
+summary(
+  glmer_res_bin <- glmer(readmitted_bin ~ sex_label + age_cs + race_label + (1 | phrr), data = dat, family = "binomial")
+)
+
+# we can't see the spatial pattern, but the residuals are at least balanced around the mean
+plot(glmer_res_bin@u)
+
+# printing results
+round(cbind(exp(summary(glmer_res_pois)$coefficients[1:9, 1]), summary(glmer_res_pois)$coefficients[, -1]), 3)
+round(cbind(exp(summary(glmer_res_bin)$coefficients[1:9, 1]), summary(glmer_res_bin)$coefficients[, -1]), 3)
+
+```
+
+### Abstract
+**Introduction.** Congestive heart failure (CHF) often leads to mortality within months or years, but during that time, patients may continue to interact with the healthcare system, often being hospitalized. Our objective is to determine whether readmission after a CHF-related encounter is associated with age, sex, and race. \
+**Data.** We use three years of Medicare Part-A data (2006-2008), containing 1,361,954 encounters for 610,347 unique patients, to identify patients with a CHF encounter. \
+**Methods.** We are interested in encounters with the healthcare system after diagnosis with CHF. For each patient with CHF, their initial encounter for the disease was designated as the "start date." Observations prior to the CHF encounter were excluded, and the number of encounters were summed for each patient. Encounters where the patient died were not included. The number of readmissions after a hospitalization for congestive heart failure was modeled with a Poisson generalized linear model (GLM). Likelihood of at least one readmission was modeled with a binomial GLM. \
+**Results.** In the Poisson model, the predicted average number of readmissions after congestive heart failure is 1.79. Compared to male patients, the number of readmissions are five percent higher for female patients (p<0.001). A 10-year increase in age from the average was associated with a 14.6-percent decrease in readmissions (p<0.001). Relative to White patients, no statistically significant difference was observed with Asian, Other, or unknown race (p~Asian~=0.291, p~Other~=0.169, p~Unknown~=0.306). Native American race was associated with a 50.7-percent increase in readmissions (p<0.001), Black race was associated with a 14.3-percent increase (p<0.001), and Hispanic or Latinx ethnicity was associated with a 39.6-percent increase (p<0.001). In the binomial model, all effects had similar directions, magnitude, and statistical significant as in the Poisson model. One exception, however, was female sex, which was associated with only 2.8 percent greater odds of readmission, but this was not statistically significant (p=0.144). Compared to White race, Native American race was associated with 74.6 percent greater odds of readmission (p=0.021), followed by Hispanic or Latinx ethnicity (35.8%, p=0.020), and Black race (9.7%, p=0.001). Unknown race was associated with a 28.8-percent decrease in odds of readmission (p=0.025). Asian race had a large increasing effect but was not statistically significant (19.8%, p=0.291), and Other race had no statistically significant effect on readmission (0.835). A 10-year increase in age from the mean was associated with 11.3 percent lower odds of a readmission. \
+**Conclusion.** Likelihood of a readmission was not significantly different between men and women, but women had a slightly higher rate of readmissions. This could be, at least in part, due to women having a lower risk of death than men, who may die before they have time at risk of readmission. The odds of death in female patients was 16.1% lower than in men (`(379148 * 228378) / (179434 * 574994) = 0.839`). Younger patients were also less likely to be readmitted, probably due to better underlying health status. There was significant variation across racial groups, with Native Americans most likely to be readmitted and have multiple readmissions. Although not all effects were statistically significant, all racial and ethnic effects (except unknown) were associated with increased odds of readmission. There are several reasons why minority patients may be more likely to be readmitted — it is possible that these patients receive a substandard care due to interpersonal and institutional racism. The severity of disease may be underestimated, and patients may be discharged before they are stable. 
+
+

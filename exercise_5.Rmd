@@ -1,0 +1,38 @@
+---
+title: "exercise_5"
+author: "Brenna Kelly"
+date: "2024-03-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
+library(haven)
+
+cg_2022 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2022/CG_2022V2_2023-09-04.dta")
+cg_2021_2 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_V2_2023-02-16.dta")
+
+cg_21_1 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_LLCP_2023-02-16.dta")
+cg_21_2 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_V1_2023-02-16.dta")
+cg_21_3 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_V2_2023-02-16.dta")
+
+
+names(cg_21_1) == names(cg_21_2)
+names(cg_21_2)
+names(cg_21_3)
+
+
+```
+

@@ -85,22 +85,31 @@ pcsa_codebook$names <- tolower(gsub(" ", "_", pcsa_codebook$Variable.Name))
 # read it in
 pcsa <- read_fwf(file = "data/gi_pop_pcsa.txt",
                  fwf_widths(pcsa_codebook$width, col_names = pcsa_codebook$names),
-                 col_select = c("pg_doc", "phsa"))
+                 col_select = c("phsa", "pg_doc"))
 
 ```
 
-#### Analytic workflow
 
-```{r}
-
-```
+### Analytic workflow
+- Combine into `dx_by_prr`
+    - From `medpar`: get count by pHRR, DRG
+    - From `denom`: get county by pHRR
+- Calculate standardized and unstandardized pHRR
+    - For standardized: get `total_rate` from `medpar`
+- Summarize discharges with figures and tables
+- Combine into `dx_by_prr`
+    - From `medpar`: get count by pHRR, DRG
+    - From `denom`: get county by pHRR
+- Calculate standardized and unstandardized pHRR
+    - For standardized: get `total_rate` from `medpar`
+- Summarize discharges with figures and tables
 
 
 ### Tasks
 
 #### **1. Calculate pHRR discharge rates.**
 
-Calculate discharge rates by pHRRs for the following five DRG groups: 89; 127; 209; 210&211 combined; and DRG 121&122&123 combined.  (“Combined” means create a variable that adds together the DRG events).  For example DRG 121, 122, and 123 are all patients with acute myocardial infarction (AMI). By combining them, you will generate an overall variable for AMI discharges.  What types of hospitalizations do these other DRGs represent?  Look them up in the data dictionary and label appropriately the variables that you create. All variables should be labeled in your analytic files.
+*Calculate discharge rates by pHRRs for the following five DRG groups: 89; 127; 209; 210&211 combined; and DRG 121&122&123 combined. (“Combined” means create a variable that adds together the DRG events).For example DRG 121, 122, and 123 are all patients with acute myocardial infarction (AMI). By combining them, you will generate an overall variable for AMI discharges.What types of hospitalizations do these other DRGs represent?Look them up in the data dictionary and label appropriately the variables that you create. All variables should be labeled in your analytic files.*
 
 ```{r}
 
@@ -109,71 +118,349 @@ medpar$drg_group <- case_when(medpar$drg == 89 ~ "SIMPLE PNEUMONIA & PLEURISY AG
                               medpar$drg == 209 ~ "MAJOR JOINT & LIMB REATTACHMENT PROCEDURES OF LOWER EXTREMITY",
                               medpar$drg %in% c(210, 211) ~ "HIP & FEMUR PROCEDURES EXCEPT MAJOR JOINT AGE >17",
                               medpar$drg %in% c(121, 122, 123) ~ "CIRCULATORY DISORDERS W AMI")
+
 ```
 
-How to calculate these pHRR rates?  What are the component parts of a rate?  You will need to summarize the numerator by pHRR using the MEDPAR file, and the denominator using the denominator file.  So, there should be two files as a result of this summarization – one with DRG specific counts of discharges by HRR (the units of analysis) and the other a count of beneficiaries by HRR.  Then, you can link these files together and calculate the rates.  By convention, the rates should be scaled to discharges per 1,000 beneficiaries.   
+*How to calculate these pHRR rates? What are the component parts of a rate? You will need to summarize the numerator by pHRR using the MEDPAR file, and the denominator using the denominator file. So, there should be two files as a result of this summarization – one with DRG specific counts of discharges by HRR (the units of analysis) and the other a count of beneficiaries by HRR. Then, you can link these files together and calculate the rates. By convention, the rates should be scaled to discharges per 1,000 beneficiaries.*
 
 ```{r}
+
 hrr_by_drg <- medpar |>
   count(phrr, drg_group) |>
   rename(count_hrr_drg = n)
 
 dx_by_hrr <- denom |>
   count(phrr)  |>
-  rename(county_hrr = n)
+  rename(count_hrr = n)
 
-dx_by_phh <- merge(hrr_by_drg, dx_by_hrr, by = "phrr")
+dx_by_prr <- merge(hrr_by_drg, dx_by_hrr, by = "phrr")
 
-dx_by_phh$discharge_rate <- 1000 * dx_by_phh$count_hrr_drg / dx_by_phh$county_hrr
+dx_by_prr$discharge_rate <- 1000 * dx_by_prr$count_hrr_drg / dx_by_prr$count_hrr
 
-dx_by_phh_noNA <- dx_by_phh |>
+dx_by_prr <- dx_by_prr |>
   filter(!is.na(drg_group))
 
-ggscatter(dx_by_phh_noNA, x = "count_hrr_drg", y = "discharge_rate", 
-          color = "drg_group", size = 2, alpha = 0.75, 
-          palette = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"))
+dx_by_prr$`DRG Group` <- str_wrap(dx_by_prr$drg_group, width = 50)
 
-ggscatter(dx_by_phh_noNA, x = "count_hrr_drg", y = "discharge_rate", 
-          color = "drg_group", size = 2, alpha = 0.75, 
-          palette = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"))
+ggscatter(dx_by_prr, x = "phrr", y = "discharge_rate", 
+          color = "DRG Group", size = 2, alpha = 0.75, 
+          palette = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"),
+          legend = "right", xlab = NULL) +
+  theme(legend.position = c(0.5, 0.8))
 
 ```
 
-
-Now you should present these rates – Use the graph box (Stata) or an R command to visualize the variation. Also, calculate the extremal quotient and interquartile ratio for each condition.  One of the problems with a comparison of rates is that the DRGs have different overall rates.  Low rates appear to have less variation with these plots. To correct for this, determine an overall Glover Isle rate (collapsing the MEDPAR and the denominator files into a single record), and then link it back to your rates by HRR file.  Then calculate the HRR to Glover Isle ratio for each DRG for HRRs.  Now repeat the box graphing.  Which condition has the highest variation?  
+*Now you should present these rates – Use the graph box (Stata) or an R command to visualize the variation. Also, calculate the extremal quotient and interquartile ratio for each condition.*
 
 ```{r}
 
 iqr_fx <- function(x) {
-  quantile(x, c(0.1, 0.25, 0.75, 0.9))
+  quantile(x, c(0, 0.1, 0.25, 0.50, 0.75, 0.9, 1))
 }
 
-dx_by_phh_noNA$drg_group <- as.character(dx_by_phh_noNA$drg_group)
+dx_by_prr$drg_group <- as.character(dx_by_prr$drg_group)
 
 res <- list()
 
-for(i in unique(dx_by_phh_noNA$drg_group)) {
-  dat <- dx_by_phh_noNA[which(dx_by_phh_noNA$drg_group == i), ]
+for(i in unique(dx_by_prr$drg_group)) {
+  dat <- dx_by_prr[which(dx_by_prr$drg_group == i), ]
   res[[i]] <- iqr_fx(dat$discharge_rate)
 }
 
 iqrs <- do.call(rbind, res) |>
   as_tibble(rownames = "drg_group")
 
-iqrs$drg_group_label = str_wrap(iqrs$drg_group, width = 20)
+iqrs$drg_group_label = str_wrap(iqrs$drg_group, width = 40)
 
-
-iqrs |>
+iqr_unstandardized <- iqrs |>
   ggplot(aes(y = drg_group_label, x = `25%`)) +
   theme_classic() +
+  geom_point(aes(x = `50%`), size = 1) +
   geom_linerange(aes(xmin = `25%`, xmax = `75%`)) +
-  geom_linerange(aes(xmin = `10%`, xmax = `90%`), linetype = "dotted") +
-  labs(title = "IQR of discharge rates by DRG", x = "Discharge rate, per 1,000", y = "Diagnosis Related Groups")
+  geom_linerange(aes(xmin = `10%`, xmax = `90%`), linetype = "dashed") +
+  geom_linerange(aes(xmin = `0%`, xmax = `100%`), linetype = "dotted") +
+  labs(title = "IQR of unstandardized \ndischarge rates by DRG \nin hospital referral regions", x = "Discharge rate, per 1,000", y = "Diagnosis Related Groups")
 
 
 ```
 
+*One of the problems with a comparison of rates is that the DRGs have different overall rates.  Low rates appear to have less variation with these plots. To correct for this, determine an overall Glover Isle rate (collapsing the MEDPAR and the denominator files into a single record), and then link it back to your rates by HRR file.  Then calculate the HRR to Glover Isle ratio for each DRG for HRRs.  Now repeat the box graphing.  Which condition has the highest variation?*
+
+```{r}
+
+# getting total rates, for standardization
+total_rate <- medpar |>
+  count(drg_group) |>
+  mutate(denom = 1000 * n / sum(n))
+
+dx_by_prr <- merge(dx_by_prr, total_rate, by = "drg_group")
+
+# standardize the rate
+dx_by_prr$standardized_rate <- dx_by_prr$discharge_rate / dx_by_prr$denom
+
+res <- list()
+
+for(i in unique(dx_by_prr$drg_group)) {
+  dat <- dx_by_prr[which(dx_by_prr$drg_group == i), ]
+  res[[i]] <- iqr_fx(dat$standardized_rate)
+}
+
+iqrs <- do.call(rbind, res) |>
+  as_tibble(rownames = "drg_group")
+
+iqrs$drg_group_label = str_wrap(iqrs$drg_group, width = 40)
+
+iqr_standardized <- iqrs |>
+  ggplot(aes(y = drg_group_label, x = `25%`)) +
+  theme_classic() +
+  geom_point(aes(x = `50%`), size = 1) +
+  geom_linerange(aes(xmin = `25%`, xmax = `75%`)) +
+  geom_linerange(aes(xmin = `10%`, xmax = `90%`), linetype = "dashed") +
+  geom_linerange(aes(xmin = `0%`, xmax = `100%`), linetype = "dotted") +
+  labs(title = "IQR of standardized \ndischarge rates by DRG \nin hospital referral regions", x = "Discharge rate, per 1,000", y = "Diagnosis Related Groups")
+
+ggarrange(iqr_unstandardized, iqr_standardized, nrow = 2,
+          widths = 5, heights = 7)
+
+```
+
+**Answer:** After standardization, the diagnosis group with the highest variation in its interquartile range [0.25, 0.75] is `circulatory disorders & AMI`, although a close second is `major joint & limb reattachment procedures of lower extremity`. These groups also have the greatest extreme variation [0.1, 0.9]. The group with the smallest variation (interquartile and extreme) is `hip & femur procedures except major joint age >17`. Even for this group, standardization increased it's interquartile range more than six-fold.
 
 
+#### **2. Calculate pHSA discharge rates.**
 
+*Repeat these analyses using pHSAs. If you have a good code file from Task 1, this should be very straightforward. For Task 1 and 2, summarize your findings in tables and figures (box plots) and summarize your findings in 100-200 words. Contrast the findings of pHRRs and pHSAs. You do not need to use an abstract format for reporting Task 1 and 2.*
+
+```{r}
+
+phsa_by_drg <- medpar |>
+  count(phsa, drg_group) |>
+  rename(count_hsa_drg = n)
+
+dx_by_hsa <- denom |>
+  count(phsa) |>
+  rename(count_hsa = n) |>
+  mutate(phsa = str_pad(phsa, pad = "0", width = 5, side = "left"))
+
+dx_by_phsa <- merge(phsa_by_drg, dx_by_hsa, by = "phsa")
+
+dx_by_phsa$discharge_rate <- 1000 * dx_by_phsa$count_hsa_drg / dx_by_phsa$count_hsa
+
+dx_by_phsa <- dx_by_phsa |>
+  filter(!is.na(drg_group))
+
+dx_by_phsa$`DRG Group` <- str_wrap(iqrs$drg_group, width = 40)
+
+ggplot(dx_by_phsa, aes(x = `DRG Group`, 
+                       y = discharge_rate, 
+                       fill = `DRG Group`)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d")) +
+  labs(title = "Discharge rate by DRG", x = "Diagnosis Related Group", y = "Discharge rate, per 100,000") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+```
+
+```{r}
+
+iqr_fx <- function(x) {
+  quantile(x, c(0, 0.1, 0.25, 0.50, 0.75, 0.9, 1))
+}
+
+dx_by_phsa$drg_group <- as.character(dx_by_phsa$drg_group)
+
+res <- list()
+
+for(i in unique(dx_by_phsa$drg_group)) {
+  dat <- dx_by_phsa[which(dx_by_phsa$drg_group == i), ]
+  res[[i]] <- iqr_fx(dat$discharge_rate)
+}
+
+iqrs <- do.call(rbind, res) |>
+  as_tibble(rownames = "drg_group")
+
+iqrs$drg_group_label = str_wrap(iqrs$drg_group, width = 40)
+
+iqr_unstandardized <- iqrs |>
+  ggplot(aes(y = drg_group_label, x = `25%`)) +
+  theme_classic() +
+  geom_point(aes(x = `50%`), size = 1) +
+  geom_linerange(aes(xmin = `25%`, xmax = `75%`)) +
+  geom_linerange(aes(xmin = `10%`, xmax = `90%`), linetype = "dashed") +
+  geom_linerange(aes(xmin = `0%`, xmax = `100%`), linetype = "dotted") +
+  labs(title = "IQR of unstandardized \ndischarge rates by DRG \nin hospital service areas", x = "Discharge rate, per 1,000", y = "Diagnosis Related Groups")
+
+
+```
+
+```{r}
+
+# getting total rates, for standardization
+total_rate <- medpar |>
+  count(drg_group) |>
+  mutate(denom = 1000 * n / sum(n))
+
+dx_by_phsa <- merge(dx_by_phsa, total_rate, by = "drg_group")
+
+# standardize the rate
+dx_by_phsa$standardized_rate <- dx_by_phsa$discharge_rate / dx_by_phsa$denom
+
+res <- list()
+
+for(i in unique(dx_by_phsa$drg_group)) {
+  dat <- dx_by_phsa[which(dx_by_phsa$drg_group == i), ]
+  res[[i]] <- iqr_fx(dat$standardized_rate)
+}
+
+iqrs <- do.call(rbind, res) |>
+  as_tibble(rownames = "drg_group")
+
+iqrs$drg_group_label = str_wrap(iqrs$drg_group, width = 40)
+
+iqr_standardized <- iqrs |>
+  ggplot(aes(y = drg_group_label, x = `25%`)) +
+  theme_classic() +
+  geom_point(aes(x = `50%`), size = 1) +
+  geom_linerange(aes(xmin = `25%`, xmax = `75%`)) +
+  geom_linerange(aes(xmin = `10%`, xmax = `90%`), linetype = "dashed") +
+  geom_linerange(aes(xmin = `0%`, xmax = `100%`), linetype = "dotted") +
+  labs(title = "IQR of standardized \ndischarge rates by DRG \nin hospital service areas", x = "Discharge rate, per 1,000", y = "Diagnosis Related Groups")
+
+ggarrange(iqr_unstandardized, iqr_standardized, nrow = 2)
+
+```
+
+**Answer:** After standardization, the diagnosis group with the highest variation in its interquartile range [0.25, 0.75] is `circulatory disorders w ami`. The group with the smallest variation is still `hip and femur procedures except major joint`. Although the x-axis is scaled differently for this hospital service area results than for the hospital referral region results, numerically I think we see that there is less variation across diagnosis groups for HSA than for HRR. This may be because service areas might capture a more homogeneous population with similar underlying characteristics than hospital referral regions. More likely, however, because there are far more HSAs than HRRs, the hospitalizations related to small groups will have inherently less variation than the large groups.
+
+#### **3. Is there a relationship between local supply of PCPs and risk of hospitalization.** 
+
+*The Glover Isle contextual file has a variable with the number of primary care physicians at the PCSA level.  Summarize this to the HSA level and link this back to the HSA.  Calculate a variable for the supply of primary care physicians (i.e. rate: primary care physicians per 1,000 beneficiaries).  Create scatter plots of primary care physicians and hospitalization rates for each DRG.  Test the associations using any inferential statistical method that you think is appropriate (THINK CAREFULLY – complex isn’t necessarily better).  Write the problem, method, results, and conclusions in the standard abstract format.*
+
+```{r}
+
+pcp_phsa <- merge(dx_by_phsa, pcsa, by = "phsa")
+
+pcp_phsa$pcp_per_capita <- pcp_phsa$pg_doc / (pcp_phsa$count_hsa / 1000)
+
+pcp_phsa$`DRG Group` = str_wrap(pcp_phsa$drg_group, width = 20)
+
+ggplot(pcp_phsa, aes(x = pcp_per_capita, fill = `DRG Group`)) +
+  geom_histogram() +
+  scale_fill_manual(values = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"))
+
+
+plt <- ggscatter(data = pcp_phsa, x = "pcp_per_capita", y = "discharge_rate", 
+                 color = "DRG Group", alpha = 0.5, legend = "none", add = "reg.line",
+                 palette = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"), title = "PCPs per capita and discharge rates by DRG")
+facet(p = plt, facet.by = "DRG Group", scales = "free")
+
+plt <- ggscatter(data = pcp_phsa, x = "pg_doc", y = "discharge_rate", 
+                 color = "DRG Group", alpha = 0.5, legend = "none", add = "reg.line",
+                 palette = c("#ff2908", "#E7B800", "#9e005d", "#0071bc", "#00a99d"), title = "Number of PCPs and discharge rates by DRG")
+facet(p = plt, facet.by = "DRG Group", scales = "free")
+
+
+```
+
+There doesn't seem to be a strong linear relationship between PCP per capita and discharge rate. At best, we see a slightly decreasing slope for `heart failure and shock` and a slightly increasingly slope for `major joint and limb reattachment procedures of lower extremity`. In number of PCPs, there is a more linear relationship, with decreasing slopes across all DRGs. However, the key takeaway from these figures is that there is substantial variability in associations between PCP supply and the DRGs.
+
+**Statistical tests: correlation**
+Here we can visually examine potential correlations between number of primary care physicians:
+
+```{r}
+
+library(corrplot)
+pcp_phsa$drg_group_label
+groups <- unique(pcp_phsa$drg_group)
+
+par(mfrow = c(3, 2))
+M = cor(pcp_phsa[which(pcp_phsa$drg_group == groups[1]), c("standardized_rate", "discharge_rate",
+                                                           "pg_doc", "pcp_per_capita")])
+corrplot(M, method = 'number', col = COL2('BrBG'), 
+         tl.col = 'black', sig.level = 0.05, 
+         title = groups[1], mar=c(0,0,2,0))
+M = cor(pcp_phsa[which(pcp_phsa$drg_group == groups[2]), c("standardized_rate", "discharge_rate",
+                                                           "pg_doc", "pcp_per_capita")])
+corrplot(M, method = 'number', col = COL2('BrBG'), 
+         tl.col = 'black', sig.level = 0.05, 
+         title = groups[2], mar=c(0,0,2,0))
+M = cor(pcp_phsa[which(pcp_phsa$drg_group == groups[3]), c("standardized_rate", "discharge_rate",
+                                                           "pg_doc", "pcp_per_capita")])
+corrplot(M, method = 'number', col = COL2('BrBG'), 
+         tl.col = 'black', sig.level = 0.05, 
+         title = groups[3], mar=c(0,0,2,0))
+M = cor(pcp_phsa[which(pcp_phsa$drg_group == groups[4]), c("standardized_rate", "discharge_rate",
+                                                           "pg_doc", "pcp_per_capita")])
+corrplot(M, method = 'number', col = COL2('BrBG'), 
+         tl.col = 'black', sig.level = 0.05, 
+         title = groups[4], mar=c(0,0,2,0))
+M = cor(pcp_phsa[which(pcp_phsa$drg_group == groups[5]), c("standardized_rate", "discharge_rate",
+                                                           "pg_doc", "pcp_per_capita")])
+corrplot(M, method = 'number', col = COL2('BrBG'), 
+         tl.col = 'black', sig.level = 0.05, 
+         title = groups[5], mar=c(0,0,2,0))
+```
+Correlations between PCPs and discharges are weak, but they seem to be stronger for number of primary care provider (`pg_doc`) than for the rate of providers per capita (`pcp_per_capita`). We'll explore this with statistical tests below:
+
+```{r}
+
+for(i in 1:length(groups)) {
+  print(groups[i])
+  print(cor.test(pcp_phsa[which(pcp_phsa$drg_group == groups[i]), ]$pg_doc, 
+                 pcp_phsa[which(pcp_phsa$drg_group == groups[i]), ]$discharge_rate))
+  print(cor.test(pcp_phsa[which(pcp_phsa$drg_group == groups[i]), ]$pg_doc, 
+                 pcp_phsa[which(pcp_phsa$drg_group == groups[i]), ]$standardized_rate)) # this returns exact same results as for discharge rate; they are perfectly correlated, as seen in the plots above.
+}
+
+```
+The strongest correlation with `pc_doc`  we see is for `simple pneumonia and pleurisy`, which has a Pearson's correlation coefficient of -0.23.
+
+To interpret the effect (however small) of PCP supply on discharges (standardized), we'll build simple linear models for each group. Although PCP supply did not have a strong relationship with discharges, it will be more suitable for a linear model than count of PCPs (this variable is highly skewed and would require log-transformation or discretization). To understand the overall effect of each DRG on hospitalizations, we'll also build a model with DRG. The DRG which has an effect closest to zero in the linear models will be used as the referent group in the combined model.
+
+```{r}
+
+
+for(i in 1:length(groups)) {
+  print(groups[i])
+  print(
+    summary(
+      lm(standardized_rate ~ pcp_per_capita, data = pcp_phsa[which(pcp_phsa$drg_group == groups[i]), ])))
+}
+
+# setting the referent
+pcp_phsa$drg_group <- relevel(as.factor(pcp_phsa$drg_group), ref = "CIRCULATORY DISORDERS W AMI")
+
+summary(lm(discharge_rate ~ pcp_per_capita + drg_group, data = pcp_phsa))
+
+```
+
+
+### Abstract
+**Problem.** Area supply of primary care providers (PCPs) is an important metric of health service. We want to determine whether PCP supply is associated with hospitalizations for several groups of conditions.
+**Method.** For each Health Service Area (HSA) in Glover Isle, we count the number of Medicare-related hospital discharges for each diagnosis related group (DRG) of interest. The discharges are divided by the number of beneficiaries in the HSA and standardized. The number of primary care providers is also obtained for each HSA, and the supply is calculated as PCPs per capita. We will test correlations between both PCP variables (count, per capita) and discharges to determine which has stronger associations. Relationships will also be examined visually. The selected PCP variable will be used to model the standardized discharge rate for each DRG. A combined model of DRG and PCP supply will be constructed, as well.
+**Results.** In individual DRG models, primary care supply (per capita) did not have a statistically significant effect on standardized discharge rates for any of the selected DRGs. Coefficients were also very small, ranging from -0.006 (for `heart failure and stroke`) to 0.002 (for `major joint and limb reattachment procedures of lower extremity`). In the combined model of PCP supply and DRG, several significant effects on discharge were noted. Relative to the referent group of `circulatory disorders w ami`, `heart failure and shock` was associated with a 10.5 more discharges per capita (p < 2e-16), and `simple pneumonia & pleurisy age >17 w cc` was associated with 6.0 more discharges per capita (p < 2e-16). On the other hand, `hip & femur procedures except major joint age >17` was associated with a 6.43 *fewer* discharges per capita (p < 2e-16). Lastly, `major joint & limb reattachment procedures of lower extremity` had a small positive association with discharges (0.82) that was not statistically significant (p = 0.072). In the combined model, PCP per capita was associated with a 0.12 fewer discharges, but this effect did not reach statistical significant at the 0.05 level (p = 0.071).
+**Conclusions.** While important to many aspects of health service and care, it appears that in this study area, PCP supply is not associated (increased or decreased) with hospitalizations related to the diagnosis related groups.
+
+### Supplemental Material
+
+Summary tables and expanded tables listed below.
+
+```{r}
+
+aggregate(dx_by_phsa$discharge_rate, by = list(dx_by_phsa$drg_group), FUN = mean) |>
+  rename("DRG" = Group.1) |>
+  rename("Mean discharge rate" = x)
+
+aggregate(dx_by_prr$discharge_rate, by = list(dx_by_prr$drg_group), FUN = mean) |>
+  rename("DRG" = Group.1) |>
+  rename("Mean discharge rate" = x)
+
+dx_by_phsa |>
+  pivot_wider(id_cols = "phsa", names_from = "drg_group", values_from = "discharge_rate")
+
+dx_by_prr |>
+  pivot_wider(id_cols = "phrr", names_from = "drg_group", values_from = "discharge_rate")
+
+```
 

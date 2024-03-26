@@ -1,0 +1,342 @@
+---
+title: "exercise_4"
+author: "Brenna Kelly"
+date: "2024-03-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Instructions:** *You know that you can’t get any information whatsoever on breast density from claims data so you are exploring the BCSC data to assess if the breast density information captured will be ok to use. Your preliminary examination of the data will be focused on how many mammograms you could include in your study and what data limitations might be present. You will explore missingness in the registry data --- answering the question: Is there likely to be systematic bias in the missingness of a key factor – breast density – in the BCSC data.*
+
+*This will require using two years of MEDPAR data.  Index hospitalizations will occur anytime during the two years.  This may lead to some bias in the rates (why??), but controlling for this is beyond the scope of the lab.*
+
+*For DRG 127 (congestive heart failure) calculate readmission rates across the Glover Isle HRRs.*
+
+*Examine the effect of age, sex, and race on the likelihood of readmission for CHF using a multilevel modeling approach to account for potential non-independence of observations within HRRs.  Explain the model Stata output as a short paragraph below your Stata results.*
+
+*Write an abstract with the title: “Regional variation in readmission rates.” In the conclusion section, provide your speculation for why these rates differ. The deliverables for this exercise will be: Workflow diagram (1 point), Rcode/Rmd (2 points),  Abstract (approach, analysis, and content/written form)	(4 points).*
+
+### Set-up
+
+```{r}
+library(dplyr)
+library(haven)
+library(ggplot2)
+library(stringr)
+library(tableone)
+library(corrplot)
+library(RColorBrewer)
+```
+
+#### Workflow
+![Workflow diagram.](/Users/brenna/Documents/School/Coursework/PHS 7020/exercise_4_workflow.png)
+
+#### Reading in our data
+
+```{r}
+list.files("data/BCSC")
+
+# reading in the clean datasets for comparison
+re <- read_dta("data/BCSC/RiskEstimation1_USE THIS.dta")
+rf <- read_dta("data/BCSC/RiskFactorsCombined.dta")
+
+# reading in the data properly
+rf_1 <- read.csv("data/BCSC/bcsc_risk_factors_summarized1_092020.csv")
+rf_2 <- read.csv("data/BCSC/bcsc_risk_factors_summarized2_092020.csv")
+rf_3 <- read.csv("data/BCSC/bcsc_risk_factors_summarized3_092020.csv")
+
+rf <- rbind(rf_1, rf_2, rf_3)
+rm(rf_1, rf_2, rf_3)
+
+re_1 <- read_dta("data/BCSC/RiskEstimation1_USE THIS.dta")
+re_2 <- read_dta("data/BCSC/RiskEstimation2.dta")
+
+re <- re_1 #rbind(re_1, re_2)
+rm(re_1, re_2)
+head(re)
+
+names(rf) <- tolower(names(rf))
+names(re) <- tolower(names(re))
+
+```
+
+We'll clean both datasets to make them somewhat comparable to each other. This will be easier if we relabel the coded variables using the data dictionaries:
+- [Risk Estimation Dataset Documentation](https://www.bcsc-research.org/datasets/rfdataset/dataset)
+- [Risk Factors Dataset Documentation](https://www.bcsc-research.org/datasets/rf/documentation)
+
+```{r}
+
+# adding labels to variables
+rf_cat <- rf |>
+  mutate(age_group_midpt = case_when(age_group_5_years == 1 ~ median(18:29),
+                                     age_group_5_years == 2 ~ median(30:34),
+                                     age_group_5_years == 3 ~ median(35:39),
+                                     age_group_5_years == 4 ~ median(40:44),
+                                     age_group_5_years == 5 ~ median(45:49),
+                                     age_group_5_years == 6 ~ median(50:54),
+                                     age_group_5_years == 7 ~ median(55:59),
+                                     age_group_5_years == 8 ~ median(60:64),
+                                     age_group_5_years == 9 ~ median(65:69),
+                                     age_group_5_years == 10 ~ median(70:74),
+                                     age_group_5_years == 11 ~ median(75:79),
+                                     age_group_5_years == 12 ~ median(80:84),
+                                     age_group_5_years == 13 ~ 85)) |>
+  mutate(age_group = case_when(age_group_5_years == 1 ~ "18-29",
+                               age_group_5_years == 2 ~ "30-34",
+                               age_group_5_years == 3 ~ "35-39",
+                               age_group_5_years == 4 ~ "40-44",
+                               age_group_5_years == 5 ~ "45-49",
+                               age_group_5_years == 6 ~ "50-54",
+                               age_group_5_years == 7 ~ "55-59",
+                               age_group_5_years == 8 ~ "60-64",
+                               age_group_5_years == 9 ~ "65-69",
+                               age_group_5_years == 10 ~ "70-74",
+                               age_group_5_years == 11 ~ "75-79",
+                               age_group_5_years == 12 ~ "80-84",
+                               age_group_5_years == 13 ~ ">85")) |>
+  mutate(race_eth = case_when(race_eth == 1 ~ "white",
+                              race_eth == 2 ~ "black",
+                              race_eth == 3 ~ "nhpi or asian",
+                              race_eth == 4 ~ "aian",
+                              race_eth == 5 ~ "hispanic",
+                              race_eth == 6 ~ "other or multiple",
+                              race_eth == 9 ~ "missing")) |>
+  mutate(first_degree_hx = case_when(first_degree_hx == 0 ~ "no",
+                                     first_degree_hx == 1 ~ "yes",
+                                     first_degree_hx == 9 ~ "missing")) |>
+  mutate(age_menarche = case_when(age_menarche == 0 ~ ">14",
+                                  age_menarche == 1 ~ "12-13",
+                                  age_menarche == 2 ~ "<12",
+                                  age_menarche == 9 ~ "missing")) |>
+  mutate(age_first_birth = case_when(age_first_birth == 0 ~ "<20",
+                                     age_first_birth == 1 ~ "20-24",
+                                     age_first_birth == 2 ~ "25-29",
+                                     age_first_birth == 3 ~ "≥30",
+                                     age_first_birth == 4 ~ "no births",
+                                     age_first_birth == 9 ~ "missing")) |>
+  mutate(current_hrt = case_when(current_hrt == 0 ~ "no",
+                                 current_hrt == 1 ~ "yes",
+                                 current_hrt == 9 ~ "missing")) |>
+  mutate(menopaus = case_when(menopaus == 1 ~ "Pre- or peri-menopausal",
+                              menopaus == 2 ~ "Post-menopausal",
+                              menopaus == 3 ~ "Surgical menopause",
+                              menopaus == 9 ~ "missing")) |>
+  mutate(bmi_group = case_when(bmi_group == 1 ~ "10-24.99",
+                               bmi_group == 2 ~ "25-29.99",
+                               bmi_group == 3 ~ "30-34.99",
+                               bmi_group == 4 ~ "35 or more",
+                               bmi_group == 9 ~ "missing")) |>
+  mutate(biophx = case_when(biophx == 0 ~ "no",
+                            biophx == 1 ~ "yes",
+                            biophx == 9 ~ "missing")) |>
+  mutate(breast_cancer_history = case_when(breast_cancer_history == 0 ~ "no",
+                                           breast_cancer_history == 1 ~ "yes",
+                                           breast_cancer_history == 9 ~ "missing")) |>
+  mutate(density = case_when(birads_breast_density == 1 ~ "Almost entirely fat",
+                             birads_breast_density == 2 ~ "Scattered fibroglandular densities",
+                             birads_breast_density == 3 ~ "Heterogeneously dense",
+                             birads_breast_density == 4 ~ "Extremely dense",
+                             birads_breast_density == 9 ~ "Unknown or different measurement system")) |>
+  mutate(density = ifelse(is.na(density), "Unknown or different measurement system",
+                          density))
+
+ # we'll use the RF distribution of age, given ≥30, to estimate age group in RE
+samp <- prop.table(table(rf_cat[which(rf_cat$age_first_birth %in% 
+                                        c("<20", "20-24", "25-29")), "age_first_birth"]))
+size_n <- nrow(re[which(re$agefirst == 0), ])
+
+age_group_sub <- sample(x = c("<20", "20-24", "25-29"), 
+                        prob = c(samp[[1]], samp[[2]], samp[[3]]),
+                        size = size_n, 
+                        replace = TRUE)
+
+re_cat <- re |>
+  mutate(age_group_midpt = case_when(agregrp == 1 ~ median(35:39),
+                                     agregrp == 2 ~ median(40:44),
+                                     agregrp == 3 ~ median(45:49),
+                                     agregrp == 4 ~ median(50:54),
+                                     agregrp == 5 ~ median(55:59),
+                                     agregrp == 6 ~ median(60:64),
+                                     agregrp == 7 ~ median(65:69),
+                                     agregrp == 8 ~ median(70:74),
+                                     agregrp == 9 ~ median(75:79),
+                                     agregrp == 10 ~ median(80:84))) |>
+  mutate(age_group = case_when(agregrp == 1 ~ "35-39",
+                               agregrp == 2 ~ "40-44",
+                               agregrp == 3 ~ "45-49",
+                               agregrp == 4 ~ "50-54",
+                               agregrp == 5 ~ "55-59",
+                               agregrp == 6 ~ "60-64",
+                               agregrp == 7 ~ "65-69",
+                               agregrp == 8 ~ "70-74",
+                               agregrp == 9 ~ "75-79",
+                               agregrp == 10 ~ "80-84")) |>
+  mutate(menopaus = case_when(menopaus == 0 ~ "Pre- or peri-menopausal",
+                              menopaus == 1 ~ "Post-menopausal",
+                              surgmeno == 1 ~ "Surgical menopause",
+                              menopaus == 9 ~ "missing")) |>
+  mutate(density = case_when(density == 1 ~ "Almost entirely fat",
+                             density == 2 ~ "Scattered fibroglandular densities",
+                             density == 3 ~ "Heterogeneously dense",
+                             density == 4 ~ "Extremely dense",
+                             density == 9 ~ "Unknown or different measurement system",
+                             is.na(density) ~ "Unknown or different measurement system")) |>
+  mutate(race_eth = case_when(race == 1 ~ "white",
+                              race == 2 ~ "nhpi or asian",
+                              race == 3 ~ "black",
+                              race == 4 ~ "aian",
+                              race == 5 ~ "other or multiple",
+                              race == 9 ~ "missing")) |>
+  mutate(race_eth = ifelse(hispanic == 1, "hispanic", race_eth)) |># hispanic will have primacy
+  mutate(bmi_group = case_when(bmi == 1 ~ "10-24.99",
+                               bmi == 2 ~ "25-29.99",
+                               bmi == 3 ~ "30-34.99",
+                               bmi == 4 ~ "35 or more",
+                               bmi == 9 ~ "missing")) |>
+  mutate(first_degree_hx = case_when(nrelbc == 0 ~ "no",
+                                     nrelbc %in% c(1, 2) ~ "yes",
+                                     nrelbc == 9 ~ "missing")) |>
+  mutate(current_hrt = case_when(hrt == 0 ~ "no",
+                                 hrt == 1 ~ "yes",
+                                 hrt == 9 ~ "missing")) |>
+  mutate(age_first_birth = case_when(agefirst == 1 ~ "≥30",
+                                     agefirst == 2 ~ "no births",
+                                     agefirst == 9 ~ "missing",
+                                     agefirst == 0 ~ sample(x = c("<20", "20-24", "25-29"), 
+                                                            prob = c(samp[[1]], samp[[2]], samp[[3]]), size = 1)))
+
+
+```
+
+• assess the breast density variables over time (i.e., both datasets)
+• specify the variables for breast density
+• which other woman-level factors are found in both datasets?
+• show the distribution of breast density in both datasets, including missing
+
+```{r}
+
+# preparing for merge; `dataset` will allow us to distinguish between them
+rf_cat$dataset <- "rf"
+re_cat$dataset <- "re"
+
+# random year, uniform distribution; to get average amount across years
+re_cat$year <- sample(x = c(1996:2002), # RE was obtained for 1996-2002
+                      size = nrow(re),
+                      replace = TRUE)
+
+re_rf <- rbind(rf_cat[, c("year", "density", "age_group",
+                          "age_group_midpt", "menopaus",
+                          "race_eth", "bmi_group",
+                          "first_degree_hx", "current_hrt",
+                          "age_first_birth", "dataset")],
+               re_cat[, c("year", "density", "age_group",
+                          "age_group_midpt", "menopaus",
+                          "race_eth", "bmi_group",
+                          "first_degree_hx", "current_hrt",
+                          "age_first_birth", "dataset")])
+
+# all_years$density_cat <- as.factor(all_years$density) # for visualization
+re_rf$density_lab <- str_wrap(
+  as.factor(re_rf$density),
+  width = 30)
+
+re_rf <- rbind(re_rf, 
+               c(NA, 2003, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA), 
+               c(NA, 2004, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA))
+
+re_rf_plt <- data.frame(table(re_rf$density, as.numeric(re_rf$year))) |>
+  rename(density = Var1,
+         year = Var2)
+
+ggplot(re_rf_plt, aes(y = Freq, x = year, fill = density)) + 
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ density)
+
+```
+
+
+• examine (to the extent you are able) whether there seems to be any systematic bias in the missingness. Systematic missingness can arise in registry data from a variety of sources – to name a few: (1) Differences in ascertainment of information/data across registry sites. For example, some registries have systems in which it is automatically captured by the Radiology Information System software as part of the mammogram and some registries require the radiologist to enter density in a separate data file, which not all take/have the time to do, and some only capture in notes, which then requires NLP to extract; (2) Secular trends over time. Breast density was only recognized as an important component of breast cancer screening in the early 2000s, thus time for uptake of this knowledge, and clinical systems with which to capture it have evolved, with concomitant changes in data over time. Further, clinical definitions of breast density have changed over time, which may account for differing distributions of the density categories in the two datasets. 
+
+```{r}
+
+re_rf$density_missing <- ifelse(re_rf$density == "Unknown or different measurement system", 1, 0)
+plot(aggregate(re_rf$density_missing, by = list(re_rf$year), FUN = mean))
+# missingness decreases over time
+
+M <- rf |>
+  mutate(density_missing = ifelse(birads_breast_density == 9, 1, 0)) |>
+  select(-c("birads_breast_density")) |>
+  cor()
+
+# RF
+corrplot(M, method = 'square', type = 'upper',  order = 'hclust',
+         addCoef.col = 'black', col = brewer.pal(n = 8, name = "PuOr"), 
+         number.cex = .9, tl.col = "black")
+# there is a negative correlation between missingness and year, as well as a positive correlation between age at menarche and age at first birth. This could be because
+
+N <- re |>
+  mutate(density_missing = ifelse(density == 9, 1, 0)) |>
+  cor()
+
+# RE
+corrplot(N, method = 'square', type = 'upper',  order = 'hclust',
+         addCoef.col = 'black', col = brewer.pal(n = 8, name = "PuOr"), 
+         number.cex = .9, tl.col = "black")
+# in the RE dataset, missingness if correlated with number of relatives with cancer, having a previous breast procedure, and surgical menopause. These variables are associated with receiving medical care for breast cancer. In this dataset, it's likely that breast density was only obtained in the course of other care.
+
+## does density missingness correlate with missingness for other variables?
+rf_missingness <- re_rf |>
+  mutate(first_degree_hx_missing = ifelse(first_degree_hx == "missing", 1, 0)) |>
+  mutate(current_hrt_missing = ifelse(current_hrt == "missing", 1, 0)) |>
+  mutate(age_first_birth_missing = ifelse(age_first_birth == "missing", 1, 0)) |>
+  mutate(current_hrt_missing = ifelse(current_hrt == "missing", 1, 0)) |>
+  mutate(menopaus_missing = ifelse(menopaus == "missing", 1, 0)) |>
+  mutate(bmi_group_missing = ifelse(bmi_group == "missing", 1, 0)) |>
+  mutate(year_missing = year) |>
+  select(ends_with("missing")) |>
+  filter(!is.na(menopaus_missing))
+
+corrplot(cor(rf_missingness), method = 'square', type = 'upper',  order = 'hclust',
+         addCoef.col = 'black', col = brewer.pal(n = 8, name = "PuOr"), 
+         number.cex = .9, tl.col = "black")
+# in both datasets, we see similar but attenuated associations observed before — probably the best approach to understanding missingness is to examine datasets separately
+
+```
+
+
+• how will you examine for systematic bias due to breast density missingness?  Certainly, you could do post hoc sensitivity analyses, fancy multiple imputation methods, etc. But for this assignment, let’s start with the basics ---- compare factors for women with known breast density to those same factors for women with missing breast density
+
+Create the following tables:
+• Table 1: Distribution of breast density by categories and missingness in each dataset
+• Table 2: Breast density missing/non-missing (as the columns) in relation to other factors that are comparable across the two datasets (as the rows)
+
+```{r}
+
+table(re_rf$density, re_rf$dataset) # count
+prop.table(table(re_rf$density, re_rf$dataset)) # distribution
+
+
+vars <- re_rf |>
+  select(-c("density_missing", "dataset")) |>
+  names()
+
+tab1 <- CreateTableOne(vars, c("density_missing", "dataset"), re_rf)
+tab1
+
+```
+
+
+### Abstract: Regional variation in readmission rates. 
+**Introduction.** Missingness is a common problem in medical data, even in registries, and prevents us from performing many types of analyses. There are a variety of approoaches to remedy missingness, but prior to addressing the issue we need to understand the source of missingness — in particular, whether there is random or systematic structure to the missingness. \n
+**Methods.** We combine data from the Breast Cancer Surveillance Consortium for risk estimation and risk factors. Missingness in breast density is of primary interest. Comparable variables between both datasets are used to combine the data, and potential structure in missingness if also explored within datasets. \n
+**Conclusions.** There is systematic structure to breast density missingness in both datasets. In particular, the missingness decreases over time in the risk factors dataset, when people became more aware that breast density was a risk factor. Missingness in the risk estimate dataset appears to be associated with interaction with the healthcare system. Likely, people who had health insurance and access to medical care were more likely to get density examinations.
+
+
+
+
+
