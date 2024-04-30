@@ -1,0 +1,241 @@
+---
+title: "exercise_7"
+author: "Brenna Kelly"
+date: "2024-03-26"
+output: 
+html_document:
+  toc: true
+  toc_float: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Instructions.** *The goals of this lab are to:* \n
+
+*1. measure the incidence of activity limitations due to balance or coordination problems, and* \n
+
+*2. estimate the longitudinal association between developing an activity limitation and participating in clubs, classes, or other organized activities. Use data from the three most recent years (rounds) of data available from the National Health and Aging Trends Study (NHATS).*
+
+*Note that NHATS periodically refreshes its sample and they recommend against combining cohorts. For this analysis, use only the 2011 or 2015 cohort. (See the tracker file to find which study IDs correspond to which cohort.) *
+
+*Include whatever tables or figures you think best summarize the data. You should give information about the sample and the distribution of the main variables of interest (i.e., exposure and outcome). You might also include the prevalence of having a balance or coordination problem at baseline, the prevalence of activity limitation due to a balance or coordination problem at each follow-up point, and the incidence of an activity limitation due to a balance or coordination problem at the end of the follow-up period. *
+
+*You will need to make some decisions about how to identify the cohort of interest for determining incidence, how to classify incident limitations (e.g., at either follow-up time point, at both, etc.), and whether to require people have follow-up at all time points or only at one. Note that you may report incidence as the number of people with incident activity limitations or you may calculate the incidence rate.*
+
+*Write an brief summary of your findings. Include the inclusion and exclusion criteria you used, your definition of incidence, the estimate of the incidence of activity limitations due to balance or coordination problems and the estimate of association between activity limitation and participation in clubs, classes, or other organized activities. Be sure to indicate what type of model you used and any covariates you included in your model (if applicable). You may report only on the crude association.*
+
+#### Workflow
+![Workflow diagram.](/Users/brenna/Documents/School/Coursework/PHS 7020/exercise_7 workflow.png)
+
+### Set-up
+
+```{r}
+
+library(nnet)
+library(lme4)
+library(stats)
+library(dplyr)
+library(tidyr)
+library(haven)
+library(stringr)
+library(mclogit)
+library(tableone)
+library(regclass)
+
+```
+
+#### Workflow
+![Workflow diagram.](/Users/brenna/Documents/School/Coursework/PHS 7020/exercise_5_workflow.png)
+
+### Bringing in our data
+
+```{r}
+
+list.files("data/NHATS/2020")
+list.files("data/NHATS/2021")
+list.files("data/NHATS/2022")
+
+# clean and combine data from all rounds
+nhats_20_sp <- read_dta("data/NHATS/2020/NHATS_Round_10_SP_File.dta") |>
+  mutate(year = 2020) |>
+  select(year, spid, ss10prbbalcnt,
+         ss10prbbalcrd, pa10clbmtgrac,
+         pa10hlkpfrclb) |>
+  rename(ssprbbalcnt = ss10prbbalcnt,
+         ssprbbalcrd = ss10prbbalcrd,
+         paclbmtgrac = pa10clbmtgrac,
+         pahlkpfrclb = pa10hlkpfrclb)
+nhats_21_sp <- read_dta("data/NHATS/2021/NHATS_Round_11_SP_File.dta") |>
+  mutate(year = 2021) |>
+  select(year, spid, ss11prbbalcnt,
+         ss11prbbalcrd, pa11clbmtgrac,
+         pa11hlkpfrclb) |>
+  rename(ssprbbalcnt = ss11prbbalcnt,
+         ssprbbalcrd = ss11prbbalcrd,
+         paclbmtgrac = pa11clbmtgrac,
+         pahlkpfrclb = pa11hlkpfrclb)
+nhats_22_sp <- read_dta("data/NHATS/2022/NHATS_Round_12_SP_File.dta") |>
+  mutate(year = 2022) |>
+  select(year, spid, ss12prbbalcnt,
+         ss12prbbalcrd, pa12clbmtgrac,
+         pa12hlkpfrclb) |>
+  rename(ssprbbalcnt = ss12prbbalcnt,
+         ssprbbalcrd = ss12prbbalcrd,
+         paclbmtgrac = pa12clbmtgrac,
+         pahlkpfrclb = pa12hlkpfrclb)
+
+```
+
+### Data cleaning
+
+```{r}
+
+# combining into one dataset
+nhats <- rbind(nhats_20_sp,
+               nhats_21_sp,
+               nhats_22_sp)
+
+track_10 <- read_dta("data/NHATS/2020/NHATS_Round_10_Tracker_File.dta")
+track_11 <- read_dta("data/NHATS/2021/NHATS_Round_11_Tracker_File.dta")
+track_12 <- read_dta("data/NHATS/2022/NHATS_Round_12_Tracker_File.dta")
+
+table(nhats$spid %in% track_10$spid)
+table(nhats$spid %in% track_11$spid)
+table(nhats$spid %in% track_12$spid)
+# tracker file 12 has all spids needed
+
+# cleaning up
+rm(track_10, track_11)
+rm(nhats_20_sp,
+   nhats_21_sp,
+   nhats_22_sp)
+
+track_12 <- track_12 |>
+  select(spid, yearsample)
+
+# combine tracker and data
+nhats_track <- merge(nhats, track_12, by = c("spid"), all.x = TRUE) |>
+  filter(yearsample == 2015) # this analysis is limited to the 2015 cohort
+
+```
+
+### Key variable exploration
+
+```{r}
+
+table(nhats_track$ssprbbalcrd)
+
+
+nhats_track <- nhats_track |>
+  #  BAL COORD PROB LIMIT ACT
+  ## In the last month, did {you/SP} have problems with balance or coordination?
+  mutate(ssprbbalcrd_cat = case_when(ssprbbalcrd == 1 ~ "yes",
+                                     ssprbbalcrd == 2 ~ "no",
+                                     !ssprbbalcrd %in% c(1, 2) ~ "missing")) |>
+  #  BALANCE OR COORD PROBS
+  ## In the last month, did {your/SP's} balance or coordination problems ever limit {your/SP's} activities?
+  mutate(ssprbbalcnt_cat = case_when(ssprbbalcnt == 1 ~ "yes",
+                                     ssprbbalcnt == 2 ~ "no",
+                                     !ssprbbalcnt %in% c(1, 2) ~ "missing")) |>
+  #  CLUB MEETINGS GRP ACTIVES
+  ## In the last month, {besides religious services,} did {you/SP} ever participate in clubs, classes, or other organized activities?
+  mutate(paclbmtgrac_cat = case_when(paclbmtgrac == 1 ~ "yes",
+                                     paclbmtgrac == 2 ~ "no",
+                                     !paclbmtgrac %in% c(1, 2) ~ "missing")) |>
+  #  HELTH KEP FRM CLB MTINGS
+  ## In the last month, did {your/SP’s} health or functioning ever keep {you/him/her} from doing this (participating in clubs, classes, or other organized activities)?
+  mutate(pahlkpfrclb_cat = case_when(pahlkpfrclb == 1 ~ "yes",
+                                     pahlkpfrclb == 2 ~ "no",
+                                     !pahlkpfrclb %in% c(1, 2) ~ "missing"))
+
+tableone::CreateTableOne(vars = c("ssprbbalcrd_cat", "ssprbbalcnt_cat",
+                                  "paclbmtgrac_cat", "pahlkpfrclb_cat"), 
+                         strata = "year", data = nhats_track)
+
+```
+
+
+### Calculating prevalence, incidence and incidence rate
+
+```{r}
+
+# prevalence
+#   by year
+nrow(nhats_track[which(nhats_track$ssprbbalcrd == 1 & 
+                         nhats_track$year == 2020), ]) / nrow(nhats_track[which(nhats_track$year == 2020), ])
+nrow(nhats_track[which(nhats_track$ssprbbalcrd == 1 & 
+                         nhats_track$year == 2021), ]) / nrow(nhats_track[which(nhats_track$year == 2021), ])
+nrow(nhats_track[which(nhats_track$ssprbbalcrd == 1 & 
+                         nhats_track$year == 2022), ]) / nrow(nhats_track[which(nhats_track$year == 2022), ])
+
+# individuals with difficulty at baseline
+baseline <- nhats_track |>
+  group_by(spid) |>
+  filter(year == min(year)) |>
+  filter(ssprbbalcrd_cat == "yes") |>
+  select(spid, year)
+
+# identifying who had an incident case (and when)
+incident_ids <- nhats_track |>
+  filter(ssprbbalcrd_cat == "yes") |>
+  filter(!spid %in% baseline$spid) |> # those entering study with difficult won't be considered incident cases
+  group_by(spid) |>
+  filter(year == min(year)) |>
+  select(spid, year) |>
+  mutate(incident = "incident")
+
+nhats_incident <- merge(nhats_track, incident_ids, by = c("spid", "year"), all.x = TRUE) |>
+  group_by(spid) |>
+  mutate(first_round = min(year)) |>
+  mutate(incident = ifelse(is.na(incident), "not incident", incident))
+
+# there were 332 incident cases
+table(nhats_incident$incident)
+# this constitutes 6% of the study population (does not consider who was at risk)
+prop.table(table(nhats_incident$incident))
+
+## incidence rate
+# person time
+nhats_incident$person_time <- nhats_incident$year - nhats_incident$first_round
+# only person-time prior to first incident will contribute to time at risk
+nhats_incident$person_time_at_risk <- ifelse(nhats_incident$spid %in% baseline$spid, 0,
+                                             nhats_incident$person_time)
+
+# incidence per 1000 = number of incident cases / person-time at risk
+1000 * nrow(nhats_incident[which(nhats_incident$incident == "incident"), ]) / sum(nhats_incident$person_time_at_risk, na.rm = TRUE)
+
+```
+
+**Answer:** The prevalence of balance and coordination problems was 31.5% in 2020, 31.1% in 2021, and 37.2% in 2022. Regarding incidence, individuals were considered to contribute person time during the entire period they were in the study, even if they were not sampled in every round. Individuals who had the condition at baseline (their first round) were not considered incident cases. Assuming they did not enter the study with the condition, an individual's first round after baseline in which they were reported to have the condition was considered an incident case. Because we follow individuals through time, the denominator was person-time at risk. This was calculated as the number of years an individual was observed in the study without the condition. People who already had the condition at baseline were never at risk for being an incident case from 2020-2022, so they did not contribute person-time at risk. The final calculation resulted in an incidence of 97.5 per 1000 person-years. 
+
+
+### Model:
+Objective 2. Estimate the longitudinal association between developing an activity limitation and participating in clubs, classes, or other organized activities
+
+```{r}
+
+# coding variables appropriately
+nhats_incident$pahlkpfrclb_cat <- relevel(as.factor(nhats_incident$pahlkpfrclb_cat), ref = "no")
+nhats_incident$ssprbbalcrd_cat <- relevel(as.factor(nhats_incident$ssprbbalcrd_cat), ref = "no")
+nhats_incident$year_cat <- relevel(as.factor(nhats_incident$year), ref = "2020")
+
+m1 <- mblogit(ssprbbalcrd_cat ~ pahlkpfrclb_cat + year_cat, random = ~1|spid,
+              data = nhats_incident)
+summary(m1)
+
+m1 <- mblogit(pahlkpfrclb_cat ~ ssprbbalcrd_cat + year_cat, random = ~1|spid,
+              data = nhats_incident)
+summary(m1)
+
+```
+
+**Model Choice.** \
+To avoid excluding observations with missing data, we use a multinomial logistic regression. This preserves the complete denominator by modeling the `pahlkpfrclb_cat` activity limitation outcome at all levels: yes, no, and missing. The `mblogit` function also allows us to use random effects, unlike the `multinom` function, which we can use to account for autocorrelation within individuals (because they may be sampled multiple times). To test the central hypothesis, we include the `ssprbbalcrd_cat` covariate, which tells us the individual had balance/coordination issues. The variable was factored to include three levels: yes, missing, and no (referent). To account for the longitudinal structure of the data, we include the round variable as a factor (ref = 2020).
+
+**Brief Summary.** \
+We will not interpret the results for the missing outcome in the multinomial model, as this will probably not be informative for our research question. For those with no balance/coordination issues, only 4% of individuals are predicted to have activity limitation (p < 2e-16). Relative to having no balance/coordination issues, having balance/coordination issues is associated with a 4.3-fold increase in risk of activity limitation (p < 2e-16). Interestingly, having missing data on balance/coordination is associated with a 15-fold increase in risk of activity limitation (p < 0.001). Those in round 11 (year 2021) and round 12 (year 2022) were predicted to have slightly greater risk of activity limitation, but this did not reach statistical significance (p~11~ = 0.161, p~12~ = 0.574). We would conclude that activity limitation did not substantially change over the study period 2020-2022 when adjusting for balance/coordination issues.
+

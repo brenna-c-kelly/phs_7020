@@ -2,37 +2,512 @@
 title: "exercise_5"
 author: "Brenna Kelly"
 date: "2024-03-26"
-output: html_document
+output: 
+html_document:
+  toc: true
+  toc_float: true
+editor_options: 
+  chunk_output_type: inline
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+**Instructions.** *The goals of this lab are to: (1) measure the prevalence of caregiving by age, sex, race, and ethnicity, (2) compare prevalence estimates using two different approaches to adjusting weights, and (3) estimate the association between being a caregiver and general health status. Use data from the two most recent years of data available from the Behavioral Risk Factor Surveillance System (BRFSS).*
+*The Caregiver Module is an optional module on the BRFSS, so only a subset of states and territories will have used it in any given year. Age, sex, race, ethnicity, and general health status appear on the core survey so these questions will be asked of all respondents in all years.*
+*BRFSS data are designed to be representative of states based on a handful of sociodemographic characteristics. To be representative, the sample must be weighted back to the source population. There are two approaches to adjusting weights if a jurisdiction has Caregiver Module data in both years. The first approach is to use only the most recent year of data so each jurisdiction is represented only one time. The second approach is to use both years of data and to adjust the weights within each year so that the total sums to 100%. For example, if a state did 5,000 surveys in Year 1 and 3,000 Surveys in Year 2 you would multiple all the Year 1 weights by 5,000/8,000 = 0.625 and you would multiply all the Year 2 weights by 3,000/8,000 = 0.375. More details – including sample code – appear in the BRFSS documentation (see “Complex Sampling Weights and Preparing BRFSS Module Data for Analysis” in the Data section of the website).*
+*For the prevalence part of this assignment, provide prevalence estimates using both approaches (goal 1) and describe how they differ (goal 2). For the analytic portion of the assignment (goal 3), you may choose which weights to use. Report the results using only the single weighting approach you select. In your annotated code, make it clear which weighting strategy you used.*
+*Display the prevalence of caregiving within each variable of interest (i.e., create 1 or more tables or figures) and using each weighting approach. Write a paragraph describing the differences between the prevalence estimates with the different weighting approaches. Are they large or small? Meaningful or not? Then develop a model to estimate the association between caregiving and general health status adjusting for important variables and identify what covariates you included in your model. Provide the results of your regression analysis.*
 
+### Set-up
 
 ```{r}
 
-```
+set.seed(410)
 
-
-
-```{r}
-
+library(sf)
+library(tmap)
+library(stats)
+library(dplyr)
+library(tidyr)
 library(haven)
+library(jtools)
+library(survey)
+library(stringr)
+library(remotes)
+library(tableone)
+library(regclass)
+library(svrepmisc)
+library(questionr)
+library(tidycensus)
+library(RColorBrewer)
 
-cg_2022 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2022/CG_2022V2_2023-09-04.dta")
-cg_2021_2 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_V2_2023-02-16.dta")
+```
 
-cg_21_1 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_LLCP_2023-02-16.dta")
-cg_21_2 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_V1_2023-02-16.dta")
-cg_21_3 <- read_dta("/Users/brenna/Downloads/PHS 7020 Data - BRFSS-selected/2021/Caregiving_2021BRFSS_V2_2023-02-16.dta")
+#### Workflow
+![Workflow diagram.](/Users/brenna/Documents/School/Coursework/PHS 7020/exercise_5_workflow.png)
+
+### Bringing in our data
+
+```{r}
+
+list.files("data/BRFSS/2021")
+list.files("data/BRFSS/2022")
 
 
-names(cg_21_1) == names(cg_21_2)
-names(cg_21_2)
-names(cg_21_3)
+cg_21_1 <- read_dta("data/BRFSS/2021/Caregiving_2021BRFSS_LLCP_2023-02-16.dta") |>
+  mutate(year = 2021) |>
+  mutate(file = "LLCP")
+cg_21_2 <- read_dta("data/BRFSS/2021/Caregiving_2021BRFSS_V1_2023-02-16.dta") |>
+  mutate(year = 2021) |>
+  mutate(file = "V1")
+cg_21_3 <- read_dta("data/BRFSS/2021/Caregiving_2021BRFSS_V2_2023-02-16.dta") |>
+  mutate(year = 2021) |>
+  mutate(file = "V2")
+
+cg_22_1 <- read_dta("data/BRFSS/2022/CG_2022LLCP_2023-09-04.dta") |>
+  mutate(year = 2022) |>
+  mutate(file = "LLCP")
+cg_22_2 <- read_dta("data/BRFSS/2022/CG_2022V1_2023-09-04.dta") |>
+  mutate(year = 2022) |>
+  mutate(file = "V1")
+cg_22_3 <- read_dta("data/BRFSS/2022/CG_2022V2_2023-09-04.dta") |>
+  mutate(year = 2022) |>
+  mutate(file = "V2")
+
+# making names match (verified that these are the same variables)
+names(cg_21_2) <- names(cg_21_1)
+names(cg_21_3) <- names(cg_21_1)
+names(cg_22_2) <- names(cg_22_1)
+names(cg_22_3) <- names(cg_22_1)
+
+# combining years of data into one caregiver dataset
+
+cg <- bind_rows(cg_21_1,
+                cg_21_2,
+                cg_21_3,
+                cg_22_1,
+                cg_22_2,
+                cg_22_3)
+
+rm(list = setdiff(ls(), "cg")) # clear the environment, except cg
+
+```
+
+### Data cleaning
+
+```{r}
+
+## notes
+summary(nchar(cg$`_ststr`))
+# should be a 6-digit code; was 5-digit prior to 2011; state is first two char (pad with 0)
+
+cg_clean <- cg |>
+  # let's remove those nasty underscores
+  rename_at(vars(starts_with('_')), ~sub("_", "", .)) |>
+  # let's trim variables down to only those we need
+  select(state, # state
+         ststr, # sample design stratification variable
+         strwt, # stratum weight
+         psu, # primary sampling unit
+         caregiv1, # caregiver
+         sexvar, # sex
+         age_g, # age, complete
+         imprace, # race, complete (with ethnicity)
+         phys14d, # physical health (extra)
+         ment14d, # mental health (extra)
+         genhlth,
+         year,
+         file) |> # general health
+  #mutate(across(c(state, ststr, psu, sexvar, age_g, imprace, phys14d, ment14d, genhlth), factor)) |>
+  mutate(state = str_pad(state, width = 2, side = "left", pad = "0")) |>
+  mutate(ststr = str_pad(ststr, width = 6, side = "left", pad = "0")) |>
+  mutate(caregiv1 = case_when(caregiv1 == 1 ~ "yes",
+                              caregiv1 == 2 ~ "no",
+                              caregiv1 %in% c(7, 8, 9, NA) ~ "no")) |> # we'll assume for our purposes that NA means no
+  mutate(sexvar = ifelse(sexvar == 1, "male", "female")) |>
+  mutate(age_g = case_when(age_g == 1 ~ "18-24",
+                           age_g == 2 ~ "25-34",
+                           age_g == 3 ~ "35-44",
+                           age_g == 4 ~ "45-54",
+                           age_g == 5 ~ "55-64",
+                           age_g == 6 ~ "≥65")) |>
+  mutate(imprace = case_when(imprace == 1 ~ "white",
+                             imprace == 2 ~ "black",
+                             imprace == 3 ~ "asian",
+                             imprace == 4 ~ "aian",
+                             imprace == 5 ~ "hispanic",
+                             imprace == 6 ~ "other")) |>
+  mutate(phys14d = case_when(phys14d == 1 ~ "0 days not good",
+                             phys14d == 2 ~ "1-13 days not good",
+                             phys14d == 3 ~ "≥14 days not good", # 14-30
+                             phys14d == 9 ~ NA)) |>
+  mutate(ment14d = case_when(ment14d == 1 ~ "0 days not good",
+                             ment14d == 2 ~ "1-13 days not good",
+                             ment14d == 3 ~ "≥14 days not good", # 14-30
+                             ment14d == 9 ~ NA)) |>
+  mutate(genhlth = case_when(genhlth == 1 ~ "excellent",
+                             genhlth == 2 ~ "very good",
+                             genhlth == 3 ~ "good",
+                             genhlth == 4 ~ "fair",
+                             genhlth == 5 ~ "poor",
+                             genhlth == 7 ~ "don't know, not sure",
+                             genhlth == 9 ~ "refused")) |>
+  mutate(genhlth_s = ifelse(genhlth %in% c("don't know, not sure",
+                                           "refused", NA),
+                            NA, genhlth)) # genhlth simplified
+
+```
+
+### Goal 1a: State adjustments
+
+```{r}
+
+state_wts <- as.data.frame(table(cg_clean$state, cg_clean$year)) |>
+  pivot_wider(names_from = Var2, values_from = Freq) |>
+  rename(state = Var1) |>
+  mutate(combined = `2021` + `2022`) |>
+  mutate(wt_2021 = `2021` / combined) |>
+  mutate(wt_2022 = `2022` / combined)
+
+cg_clean <- merge(cg_clean, state_wts, by = "state") |>
+  mutate(state_wt = ifelse(year == 2021, strwt * wt_2021,
+                           strwt * wt_2022))
+
+cg_clean[sample(nrow(cg_clean), 10), c("wt_2021", "wt_2022", "strwt", "state_wt")]
+# state weights are adjusted based on whether the state data included multiple years
+
+```
+
+### Goal 1b: Only most recent data
+
+```{r}
+table(cg_clean$state == "30", cg_clean$wt_2022)
+
+cg_recent <- cg_clean |>
+  filter(wt_2021 == 1 | wt_2022 != 0)
+#   - if wt_2021 is 1, then the state was not present in the 2022 dataset
+#   - if wt_2022 == 1, then the state was not present in the 2021 dataset
+#   - filtering out observations that were in both ensures that each state is included in one survey only (the most recent)
+
+cg_recent[sample(nrow(cg_recent), 10), c("wt_2021", "wt_2022", "strwt", "state_wt")]
+# only states which are only represented in either 2022 or 2021 are included; this is the most recent year of data
+# we will use strwt for this approach
 
 
 ```
+
+### Goal 2: Comparing approaches
+
+#### Comparing across characteristics
+
+```{r}
+
+# sex is very similar; slightly more men with approach 1
+print("approach 1")
+prop.table(wtd.table(cg_recent$sexvar, weights = cg_recent$strwt, normwt = FALSE))
+print("approach 2")
+prop.table(wtd.table(cg_clean$sexvar, weights = cg_clean$state_wt, normwt = FALSE))
+
+# age is also very similar
+print("approach 1")
+prop.table(wtd.table(cg_recent$age_g, weights = cg_recent$strwt, normwt = FALSE))
+print("approach 2")
+prop.table(wtd.table(cg_clean$age_g, weights = cg_clean$state_wt, normwt = FALSE))
+
+# race is similar; approach 1 has slightly more of all races but fewer hispanic individuals
+#   Hispanic ethnicity has 2% more representation in approach 2
+print("approach 1")
+prop.table(wtd.table(cg_recent$imprace, weights = cg_recent$strwt, normwt = FALSE))
+print("approach 2")
+prop.table(wtd.table(cg_clean$imprace, weights = cg_clean$state_wt, normwt = FALSE))
+
+# general health is very similar between approaches; no substantial differences
+print("approach 1")
+prop.table(wtd.table(cg_recent$genhlth, weights = cg_recent$strwt, normwt = FALSE))
+print("approach 2")
+prop.table(wtd.table(cg_clean$genhlth, weights = cg_clean$state_wt, normwt = FALSE))
+
+```
+
+Comparing by proportion of caregivers:
+
+```{r}
+
+print("% Caregivers, state-weighted:")
+round(prop.table(wtd.table(cg_clean$caregiv1, weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+print("% Caregivers, only most recent year:")
+round(prop.table(wtd.table(cg_recent$caregiv1, weights = cg_recent$strwt, normwt = FALSE)), 4)*100
+###
+```
+#### Map: caregiving prevalence by approach
+
+```{r}
+
+state_prev_1 <- as.data.frame(round(prop.table(wtd.table(cg_recent$caregiv1,
+                                                         cg_recent$state, 
+                                           weights = cg_recent$strwt, 
+                                           normwt = FALSE)), 4)*100) |>
+  rename(caregiver = Var1,
+         state = Var2,
+         prevalence = Freq)
+state_prev_2 <- as.data.frame(round(prop.table(wtd.table(cg_clean$caregiv1,
+                                                         cg_clean$state, 
+                                           weights = cg_clean$state_wt, 
+                                           normwt = FALSE)), 4)*100) |>
+  rename(caregiver = Var1,
+         state = Var2,
+         prevalence = Freq)
+
+# spatial data
+shp <- get_acs(geography = "state",
+               variables = "B01001_001",
+               geometry = TRUE,
+               year = 2021)
+
+# projecting
+aea <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +ellps=GRS80 +datum=NAD83"
+shp <- st_transform(shp, st_crs(aea))
+
+# merge and map
+state_shp_1 <- merge(shp, state_prev_1, by.x = "GEOID", by.y = "state", all.x = TRUE)
+state_shp_2 <- merge(shp, state_prev_2, by.x = "GEOID", by.y = "state", all.x = TRUE)
+
+approach_1 <- tm_shape(state_shp_1) +
+  tm_polygons(col = "prevalence", palette = "viridis", style = "cont", lwd = 0, legend.reverse = TRUE) +
+  tm_layout(title = "Prevalence of \ncaregivers",
+            title.position = c(0.55, 0.85))
+approach_2 <- tm_shape(state_shp_2) +
+  tm_polygons(col = "prevalence", palette = "viridis", style = "cont", lwd = 0, legend.reverse = TRUE) +
+  tm_layout(title = "Prevalence of \ncaregivers",
+            title.position = c(0.55, 0.85))
+
+tmap_arrange(approach_1, approach_2, nrow = 2)
+
+```
+
+#### Map: state representation in data by year
+
+```{r}
+
+cg_clean$wt_plot <- case_when(cg_clean$wt_2021 == 1 ~ 0,
+                              cg_clean$wt_2022 == 1 ~ 1,
+                              cg_clean$wt_2021 != 0 &
+                                cg_clean$wt_2021 != 1 ~ (cg_clean$wt_2021))
+
+state_year_wts <- as.data.frame(table(cg_clean$state, cg_clean$wt_plot)) |>
+  filter(Freq != 0) |>
+  rename(state = Var1,
+         year_wt = Var2) |>
+  mutate(year_wt = case_when(year_wt == 0 ~ 2021,
+                             year_wt == 1 ~ 2022,
+                             year_wt == 0.351282936370958 ~ 0.351282936370958 + 2021,
+                             year_wt == 0.42150582799538 ~ 0.42150582799538 + 2021,
+                             year_wt == 0.464620880012989 ~ 0.464620880012989 + 2021,
+                             year_wt == 0.475444972509552 ~ 0.475444972509552 + 2021,
+                             year_wt == 0.483024968564757 ~ 0.483024968564757 + 2021,
+                             year_wt == 0.485836749906821 ~ 0.485836749906821 + 2021,
+                             year_wt == 0.510508083140878 ~ 0.510508083140878 + 2021))
+
+state_year_wts_shp <- merge(shp, state_year_wts, by.x = "GEOID", by.y = "state", all.x = TRUE)
+
+tm_shape(state_year_wts_shp) +
+  tm_polygons(col = "year_wt", palette = "RdYlBu", style = "cont", lwd = 0.5, border.col = "white", legend.reverse = TRUE,
+              legend.show = FALSE) +
+  tm_add_legend(
+    labels = c("2021 only", "Both 2021 and 2022 equally", "2022 only", "No data"),
+    col = c("#97272B", "#FDF8BC", "#32368F", "gray"),
+    border.lwd = 0.5,
+    border.col = "white",
+    title = "Years represented") +
+  tm_layout(title = "Representation of \nyears 2021 and 2022 \n in BRFSS data",
+            title.position = c(0.65, 0.8),
+            legend.position = c(0.2, 0.1))
+
+```
+
+
+### Goal 3: analysis, with weighted data
+
+#### Summary statistics
+
+Before performing a formal analysis, we'll so some back-of-the-envelope calculations to make sure nothing is off in the dataset.
+
+```{r}
+
+round(prop.table(wtd.table(cg_recent$caregiv1, weights = cg_recent$strwt, normwt = FALSE)), 4)*100
+## initially it seems that about 16% of people in the dataset are caregivers
+
+round(prop.table(wtd.table(cg_clean$caregiv1, cg_clean$sexvar, weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+# 9.7% of surveyed individuals are female caregivers
+# 6.4% of surveyed individuals are female caregivers
+
+9.68 / 6.35
+# women were 52% more likely to be caregivers than men
+
+round(prop.table(wtd.table(cg_clean$caregiv1, cg_clean$age_g, weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+# people were more likely to be caregivers as they got older
+# e.g.,
+(4.67 / 22.46) / (0.75 / 6.84)
+# yes 65 / no 65  // yes 18-24 / no 18-24
+# people aged ≥65 were 90% more likely to be a caregiver than those aged 18-24
+
+round(prop.table(wtd.table(cg_clean$caregiv1, cg_clean$imprace, weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+# by race and ethnicity, the group most likely to be a caregiver was AIAN, with 26% being caregivers
+0.20 / 0.76
+# the group least likely to be a caregiver was Asian, with 10% being caregivers
+0.37 / 3.63
+# this is a bit surprising culturally, but it may be associated with life expectancy and socioeconomic statys; the AIAN population has the lowest life expectancy of any racial group, and so people may need to be caregivers younger. The Asian population has some of the highest life expectancy and socioeconomic status (sometimes higher than the non-Hispanic White population), so paying for a professional caregiver may be more feasible. Of course, the Asian demographic is also extremely diverse, and so we're likely oversimplifying.
+
+round(prop.table(wtd.table(cg_clean$caregiv1, cg_clean$genhlth, weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+# when we compare those in excellent health to all health statuses, caregivers are 22% less likely to be in excellent health, compare to non-caregivers
+(2.49 / 16.00)  / ((0.02 + 2.38 + 5.29 + 0.70 + 0.01 + 5.15) / (0.16 + 10.63 + 26.44 + 3.30 + 0.06 + 27.38))
+# when we compare those in excellent or very good health to all health statuses, caregivers are 13% less likely to be in excellent or very good health, compare to non-caregivers
+(5.15 + 2.49) / (27.38 + 16.00)  / ((0.02 + 2.38 + 0.70 + 0.01 + 5.29) / (0.16 + 10.63 + 3.30 + 0.06 + 27.38))
+# caregivers are 12% more likely to be in poor health than non-caregivers
+(0.70 / 3.30)  / ((5.29 + 2.49 + 0.02 + 2.38  + 0.01 + 5.15) / (26.44 + 16.00 + 0.16 + 10.63  + 0.06 + 27.38))
+
+
+```
+
+![Workflow diagram.](/Users/brenna/Documents/School/Coursework/PHS 7020/exercise_5_conceptual model-02.png)
+
+#### Map: weighted number of observations by state
+
+```{r}
+
+state_presence <- as.data.frame(wtd.table(cg_clean$state, weights = cg_clean$state_wt, normwt = FALSE)) |>
+  rename(state = Var1,
+         weighted_n = Freq)
+
+state_shp <- merge(shp, state_presence, by.x = "GEOID", by.y = "state", all.x = TRUE)
+
+tm_shape(state_shp) +
+  tm_polygons(col = "weighted_n", palette = "viridis", style = "cont", lwd = 0, legend.reverse = TRUE) +
+  tm_layout(title = "Weighted number \nof observations",
+            title.position = c(0.6, 0.9))
+
+```
+
+#### Formal analysis
+
+```{r}
+
+cg_clean$caregiver <- ifelse(cg_clean$caregiv1 == "yes", 1, 0)
+
+# null model:
+g_1 <- glm(caregiver ~ 1, family = "binomial", cg_clean, weights = state_wt)
+summary(g_1)
+exp(g_1$coefficients) # the prevalence rate is about 19.1%, which is what we would expect based on our understanding of the data
+
+# set referent groups
+cg_clean$sexvar <- relevel(as.factor(cg_clean$sexvar), ref = "male") # standard
+cg_clean$age_g <- relevel(as.factor(cg_clean$age_g), ref = "45-54") # middle/common group
+cg_clean$imprace <- relevel(as.factor(cg_clean$imprace), ref = "white") # largest group
+cg_clean$genhlth <- relevel(as.factor(cg_clean$genhlth), ref = "good") # middle of ordinal
+
+# model with covariates of interest
+g_2 <- glm(caregiver ~ sexvar + age_g + imprace + genhlth, 
+           family = "binomial", cg_clean, weights = state_wt)
+summary(g_2)
+exp(g_2$coefficients)
+
+# we won't pay too much attention to statistical significance (all are significant), because this is such a large dataset
+#  - when we adjust for these characteristics, prevalence of caregivers is estimated to be about 19.9%
+#  - women are 59% more likely to be a caregiver than man
+#  - compared to 45-54-year-olds, most age groups are less likely to be a caregiver (including ≥65, contrary to the unadjusted estimation we obtained above). However, 55-64-year-olds are 22% more likely to be a caregiver than 45-to-54-year-olds
+#  - at first, the race and ethnicity effects seem reasonable. However, the effect of Hispanic ethnicity seems far too small (essentially an odds of 0, which doesn't track with what we saw above). We'll check for multicollinearity:
+VIF(g_2)
+    # the VIF is less than 2; there doesn't appear to be any multicollinearity. We'll     explore this issue next.
+#  - compare to those who are White, AIAN and Other racial groups are more likely to be a caregiver, and Asian and Black groups are more less likely to be a caregiver
+#  - Compared to those in good health, caregivers are less likely to be in excellent or very good health and more likely to be in fair health; interestingly, caregivers are also less likely to be in poor health, probably because they need to be physically able to care for themselves; caregivers were also more likely to not know or refuse to answer the question.
+
+
+```
+Let's dig into the issue with the Hispanic ethnicity covariate:
+
+```{r}
+
+g_3 <- glm(caregiver ~ imprace, 
+           family = "binomial", cg_clean, weights = state_wt)
+summary(g_3)
+exp(g_3$coefficients)
+# we get the same issue, even without adjustment from other variables
+
+# let's try dummy coding
+cg_clean <- cg_clean |>
+  mutate(white = ifelse(imprace == "white", 1, 0)) |>
+  mutate(aian = ifelse(imprace == "aian", 1, 0)) |>
+  mutate(asian = ifelse(imprace == "asian", 1, 0)) |>
+  mutate(black = ifelse(imprace == "black", 1, 0)) |>
+  mutate(hispanic = ifelse(imprace == "hispanic", 1, 0)) |>
+  mutate(other = ifelse(imprace == "other", 1, 0))
+
+# now we'll leave out White
+g_4 <- glm(caregiver ~ aian + asian + black + hispanic + other, 
+           family = "binomial", cg_clean, weights = state_wt)
+summary(g_4)
+exp(g_4$coefficients)
+VIF(g_4)
+# same result, and multicollinearity is low
+
+# let's explore it descriptively
+wtd.table(cg_clean$caregiver, cg_clean$hispanic, 
+          weights = cg_clean$state_wt, normwt = FALSE)
+round(prop.table(wtd.table(cg_clean$caregiver, cg_clean$hispanic, 
+                           weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+# 2.21% (n ~ 359,782) of the surveyed population is a Hispanic caregiver
+round(prop.table(wtd.table(cg_clean$caregiver, cg_clean$asian, 
+                           weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+# by comparison, only 0.37% of the surveyed Asian population is a caregiver, so the small sample size is probably not what's creating an issue
+round(prop.table(wtd.table(cg_clean$caregiver, cg_clean$other, 
+                           weights = cg_clean$state_wt, normwt = FALSE)), 4)*100
+# and only 0.62% of Other race population is a caregiver
+
+# in terms of size, the Hispanic population is most similar to the population:
+wtd.table(cg_clean$imprace, 
+          weights = cg_clean$state_wt, normwt = FALSE)
+# it's known that the population of Other race is more likely to report Hispanic or Latinx ethnicity; let's try combining the groups for the regression:
+cg_clean <- cg_clean |>
+  mutate(other_hispanic = ifelse(hispanic | other == 1, 1, 0))
+
+g_5 <- glm(caregiver ~ aian + asian + black + other_hispanic, 
+           family = "binomial", cg_clean, weights = state_wt)
+summary(g_5)
+exp(g_5$coefficients)
+# while this isn't an ideal approach, this does fix the issue, more than we would expect if we were to average the effects of Other race and Hispanic ethnicity. It may be a structural issue in the data.
+#  - out interpretation is, compared to the White population, those of Hispanic ethnicity of Other race are 26% more likely to be a caregiver
+
+```
+
+Let's build the final model with the new race variable:
+
+```{r}
+
+cg_clean <- cg_clean |>
+  mutate(fixed_race_eth = case_when(imprace %in% c("hispanic", "other") ~
+                                      "hispanic, other",
+                                    imprace == "white" ~ "white",
+                                    imprace == "black" ~ "black",
+                                    imprace == "asian" ~ "asian",
+                                    imprace == "aian" ~ "aian")) |>
+  mutate(fixed_race_eth = relevel(as.factor(fixed_race_eth), ref = "white"))
+
+final_model <- glm(caregiver ~ sexvar + age_g + genhlth +
+                     fixed_race_eth, # equivalent to what is above in g_5
+                   family = "binomial", cg_clean, weights = state_wt)
+summary(final_model)
+exp(final_model$coefficients)
+# this is the model we will interpret for the abstract
+
+```
+
+### Abstract
+Title: Caregiving prevalence and the association between caregiving and general health status: Data from the Behavioral Risk Factor Surveillance System 2021-2022 \
+**Introduction.** Caregivers play an important role in supporting aging populations, those receiving medical treatment, and people with disabilities. In order to better understand this population, we investigate prevalence of caregivers and their health status. \
+**Data.** We use two years of Behavioral Risk Factor Surveillance System data (2021-2022), containing 396,465 survey observations for 16,271,751 individuals. \
+**Methods.** Caregiving was defined as providing "regular care or assistance to a friend or family member who has a health problem or disability" in the past 30 days. Because multiple years of data were used in this cross-sectional study, with some states represented multiple times, we adjusted sample weights to account for the over-representation of states present in both years. Weights were calculated as the proportion of total state observations in each year, multiplied by the BRFSS-calculated survey weight. In other words, if a state had 10,000 observations in 2021 and 5,000 in 2022, the sample weights for that state would be multiplied by 0.67 for 2021 and 0.33 for 2022. We first calculated the overall unadjusted prevalence of caregivers and then mapped geographically by state. We used a log-binomial generalized linear model to calculate prevalence when adjusting for sex (ref: male), age group (18-24, 25-34, 35-44, ref: 45-54, 55-64, ≥65), race and ethnicity (Black, Asian, American Indian or Alaska Native, Other race, Hispanic ethnicity, and ref: White race). Additionally, we included general health status as a key covariate (excellent, very good, good, fair, poor, don't know or refused; ref: good). In order to include Hispanic ethnicity in the model, Other race and Hispanic ethnicity were combined into a single variable. We tested for multicollinearity using the variance inflation factor test.  \
+**Results.** The adjusted prevalence of caregivers was 19.93% (SE: 0.002088, p < 0.001), which was similar to the unadjusted 19.09% (SE: 0.0006756 p < 0.001). Women were 47.7% more likely to be a caregiver than men (p < 0.001). Compared to those in good health, caregivers were 18.5% less likely to be in excellent health (p < 0.001), 6.8% less likely to be in very good health (p < 0.001), and 6.2% more likely to be in fair health. Caregivers were also 5.8% less likely to be in poor health, 36.0% more likely to not know their health status, and 46.5% more likely to refuse to answer. Compared to people in the 45-to-54 age group, most other age groups were less likely to be a caregiver; people aged ≥65 were 9.9% less likely to be a caregiver, those aged 18-24 were 45.1% less likely, those aged 25-34 were 45.4% less likely, and those aged 35-44 were 22.4% less likely. However, those slightly older than 44-54, in the 55-to-64 age group, were 20.8% more likely to be a caregiver. Compare to those of White race, being a caregiver was 29.9% more common among American Indian or Alaska Native individuals. All other racial and ethnic groups were less likely to be a caregiver, with a 42.6% lower odds associated with Asian race, 21.8% lower odds associated with Hispanic ethnicity/Other race, and 4.8% lower odds associated with Black race. \
+**Conclusion.** Approximately one in five surveyed people were caregivers, or about 3,254,350 individuals. As expected, female sex had one of the largest effects on caregiver prevalence, increasing the effect by nearly 50%. General health status was typically good or fair among caregivers, but unlikely to be excellent or very good. Interestingly, caregivers were also less likely to be in poor health, probably because they would need to be physically able to care for others. Caregivers were also more likely to not know their health status or refuse to answer. There is substantial and statistically significant racial variation among caregivers, as well, which may depend on socioeconomic status and/or cultural characteristics. Lastly, prevalence of caregivers increased by age group, up until age 65, when it declined. This is probably due to people caring for aging parents or spouses at younger ages, progressively not being able to care for others, and then perhaps requiring caregiving themselves.
 
